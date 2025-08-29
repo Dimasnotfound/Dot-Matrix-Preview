@@ -4,47 +4,47 @@
 <title>ESC/POS Hex → Dot-Matrix Preview</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
-  :root{
-    --cols:64;              /* lebar efektif dalam kolom monospace */
-    --lineHeight:4.233mm;   /* default = ESC 2 (1/6 inch) ≈ 34 dots @ 8 dot/mm */
+  :root {
+    --cols: 64;              /* Lebar efektif 64 kolom, sesuai printer dot matrix lama (e.g., Epson LX-300) */
+    --lineHeight: 4.233mm;   /* Default = ESC 2 (1/6 inch) ≈ 34 dots @ 8 dot/mm, cocok untuk dot matrix */
   }
-  @page { size: 21.6cm 27.7cm; margin: 0; }
-  html,body{height:100%}
-  body{margin:0;background:#0b1220;color:#e9eef7;font-family:ui-sans-serif,system-ui,Arial}
-  .app{max-width:1200px;margin:0 auto;padding:16px}
-  .card{background:#0f1a2f;border:1px solid #1f2b44;border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.3)}
-  .row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
-  .stack{display:flex;flex-direction:column;gap:8px}
-  label{font-size:13px;opacity:.9}
-  textarea,select,button,input{border-radius:10px;border:1px solid #24406f;background:#0e1730;color:#e9eef7}
-  textarea{width:100%;min-height:200px;padding:12px;font:12px/1.35 "Cascadia Mono","Courier New",monospace}
-  .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-  .controls > *{padding:9px 10px}
-  button{cursor:pointer;font-weight:600}
-  .hint{font-size:12px;opacity:.8}
-  /* Halaman fisik 21.6 x 27.7 cm */
-  .page-wrap{margin-top:16px}
-  .page{
-    width:21.6cm;height:27.7cm;margin:0 auto;background:#fff;color:#000;
-    display:flex;flex-direction:column;overflow:auto;border-radius:8px
+  @page { size: 21.6cm 27.7cm; margin: 0; } /* Ukuran kertas A4 landscape */
+  html, body { height: 100% }
+  body { margin: 0; background: #0b1220; color: #e9eef7; font-family: ui-sans-serif, system-ui, Arial }
+  .app { max-width: 1200px; margin: 0 auto; padding: 16px }
+  .card { background: #0f1a2f; border: 1px solid #1f2b44; border-radius: 16px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.3) }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start }
+  .stack { display: flex; flex-direction: column; gap: 8px }
+  label { font-size: 13px; opacity: .9 }
+  textarea, select, button, input { border-radius: 10px; border: 1px solid #24406f; background: #0e1730; color: #e9eef7 }
+  textarea { width: 100%; min-height: 200px; padding: 12px; font: 12px/1.35 "Cascadia Mono", "Courier New", monospace }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center }
+  .controls > * { padding: 9px 10px }
+  button { cursor: pointer; font-weight: 600 }
+  .hint { font-size: 12px; opacity: .8 }
+  /* Halaman fisik 21.6 x 27.7 cm (A4 landscape) */
+  .page-wrap { margin-top: 16px }
+  .page {
+    width: 21.6cm; height: 27.7cm; margin: 0 auto; background: #fff; color: #000;
+    display: flex; flex-direction: column; overflow: auto; border-radius: 8px
   }
-  .slip{flex:1;display:block;padding:0 0;break-inside:avoid}
-  pre.receipt{
-    margin:0;padding:0 6mm; /* sedikit margin visual kiri/kanan saja */
-    white-space:pre; font-family:"Courier New", Courier, monospace;
-    font-size:12pt; line-height:var(--lineHeight);
-    width:calc(var(--cols) * 1ch);
+  .slip { flex: 1; display: block; padding: 0 0; break-inside: avoid }
+  pre.receipt {
+    margin: 0; padding: 0 6mm; /* Margin kiri/kanan untuk visual yang realistis */
+    white-space: pre; font-family: "Courier New", Courier, monospace;
+    font-size: 12pt; line-height: var(--lineHeight);
+    width: calc(var(--cols) * 1ch); /* Lebar berdasarkan kolom monospace */
   }
-  .bold{font-weight:700}
-  .ul{ text-decoration: underline }
-  /* Grid kolom opsional */
-  .with-grid pre.receipt{
+  .bold { font-weight: 700 }
+  .ul { text-decoration: underline }
+  /* Grid kolom opsional untuk debugging */
+  .with-grid pre.receipt {
     background:
       repeating-linear-gradient(to right, rgba(0,0,0,.06), rgba(0,0,0,.06) 1ch, transparent 1ch, transparent 2ch),
-      linear-gradient(#0000,#0000);
+      linear-gradient(#0000, #0000);
   }
-  .toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  .sep{width:1px;height:24px;background:#223354;opacity:.6}
+  .toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap }
+  .sep { width: 1px; height: 24px; background: #223354; opacity: .6 }
 </style>
 
 <div class="app">
@@ -66,8 +66,9 @@
           </label>
           <span class="sep"></span>
           <label>Codepage:
-            <select id="cpOverride" title="Override codepage"><option value="auto">Auto (ESC t n)</option>
-              <option value="windows-1252">windows-1252</option>
+            <select id="cpOverride" title="Override codepage">
+              <option value="auto">Auto (ESC t n)</option>
+              <option value="windows-1252" selected>windows-1252</option>
               <option value="ibm437">ibm437</option>
               <option value="ibm850">ibm850</option>
               <option value="ibm866">ibm866</option>
@@ -81,7 +82,7 @@
           <button id="renderBtn">Render</button>
           <button id="clearBtn">Clear</button>
         </div>
-        <div class="hint">Tinggi halaman diisi otomatis sesuai line-spacing terakhir.</div>
+        <div class="hint">Tinggi halaman disesuaikan dengan line-spacing terakhir. Gunakan 64 kolom untuk akurasi dot matrix lama.</div>
       </div>
     </div>
   </div>
@@ -93,103 +94,110 @@
 
 <script>
 /* ====== Parameter fisik ====== */
-const PAPER_HEIGHT_MM = 277;    // 27,7 cm
+const PAPER_HEIGHT_MM = 277;    // 27,7 cm (A4 landscape)
 const PAPER_WIDTH_MM  = 216;    // 21,6 cm (informasi; lebar text dikontrol kolom monospace)
-const PRINTER_DPMM    = 8;      // ~203 dpi vertikal (common)
+const PRINTER_DPMM    = 8;      // ~203 dpi vertikal (standar dot matrix lama)
 const DEFAULT_LS_DOTS = 34;     // ESC 2 default 1/6 inch → ~34 dots @ 8 dot/mm
 
 /* ====== Util ====== */
 const escHTML = s => String(s).replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
-const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
 /* Map ESC t n → TextDecoder label */
 const CODEPAGE_MAP = new Map([
-  [16, 'windows-1252'], // WPC1252
-  [0,  'ibm437'],       // PC437
+  [16, 'windows-1252'], // WPC1252 (default untuk printer lama dengan Latin-1)
+  [0,  'ibm437'],       // PC437 (umum untuk dot matrix lama)
   [2,  'ibm850'],       // PC850
   [17, 'ibm866'],       // PC866
-  [19, 'iso-8859-15']   // PC858≈Latin-9 (fallback dekat)
+  [19, 'iso-8859-15']   // PC858≈Latin-9
 ]);
 
 /* ====== Hexdump parser → Uint8Array ====== */
-function parseHexDump(input){
+function parseHexDump(input) {
   const lines = input.split(/\r?\n/);
   const bytes = [];
-  for (const line of lines){
+  for (const line of lines) {
     if (!line.trim()) continue;
-    // buang kolom ASCII (setelah '|') & offset di kiri
+    // Buang kolom ASCII (setelah '|') & offset di kiri
     const left = line.split('|')[0];
-    const noOffset = left.replace(/^\s*[\da-fA-F]{4,}\s+/,'');
+    const noOffset = left.replace(/^\s*[\da-fA-F]{4,}\s+/, '');
     const matches = noOffset.match(/\b[0-9a-fA-F]{2}\b/g);
-    if (matches) matches.forEach(h=>bytes.push(parseInt(h,16)));
+    if (matches) matches.forEach(h => bytes.push(parseInt(h, 16)));
   }
-  if (bytes.length===0){
-    (input.match(/\b[0-9a-fA-F]{2}\b/g)||[]).forEach(h=>bytes.push(parseInt(h,16)));
+  if (bytes.length === 0) {
+    (input.match(/\b[0-9a-fA-F]{2}\b/g) || []).forEach(h => bytes.push(parseInt(h, 16)));
   }
   return new Uint8Array(bytes);
 }
 
 /* ====== ESC/POS interpreter ======
    Line = { align:'left'|'center'|'right', spans:[{text, bold, ul}], widthCols:number }
+   Modifikasi untuk mendukung tata letak khusus (e.g., TGL BAYAR dan DAYA sejajar)
 ====================================*/
-function interpretEscPos(bytes, opts){
-  let i=0, b=0;
-  let curCols = 0; // posisi kolom berjalan untuk HT
+function interpretEscPos(bytes, opts) {
+  let i = 0, b = 0;
+  let curCols = 0; // Posisi kolom berjalan untuk HT
   let state = {
-    align:'left',
-    bold:false,
-    ul:false,
-    codepage:16,
-    decoder:newDecoder(16, opts.cpOverride),
-    lineSpacingDots:DEFAULT_LS_DOTS,
-    font:0
+    align: 'left',     // Default ke left untuk akurasi dot matrix lama
+    bold: false,
+    ul: false,
+    codepage: 16,      // Default ke windows-1252 untuk kompatibilitas
+    decoder: newDecoder(16, opts.cpOverride),
+    lineSpacingDots: DEFAULT_LS_DOTS,
+    font: 0
   };
   let lines = [];
   let curLine = mkLine(state.align);
   let curSpan = mkSpan(state);
 
-  function newDecoder(cpNum, override){
-    const label = override && override!=='auto' ? override : (CODEPAGE_MAP.get(cpNum) || 'windows-1252');
-    try{ return new TextDecoder(label) }catch{ return new TextDecoder('windows-1252') }
+  function newDecoder(cpNum, override) {
+    const label = override && override !== 'auto' ? override : (CODEPAGE_MAP.get(cpNum) || 'windows-1252');
+    try { return new TextDecoder(label) } catch { return new TextDecoder('windows-1252') }
   }
-  function mkLine(align){ return { align, spans:[], widthCols:0 } }
-  function mkSpan(st){ return { text:'', bold:st.bold, ul:st.ul } }
-  function flushSpan(){
-    if (curSpan.text){
+  function mkLine(align) { return { align, spans: [], widthCols: 0 } }
+  function mkSpan(st) { return { text: '', bold: st.bold, ul: st.ul } }
+  function flushSpan() {
+    if (curSpan.text) {
       curLine.spans.push(curSpan);
       curSpan = mkSpan(state);
     }
   }
-  function flushLine(){
+  function flushLine() {
     flushSpan();
     lines.push(curLine);
-    curLine = mkLine(state.align);
+    curLine = mkLine(state.align); // Reset align per baris
     curCols = 0;
   }
-  function writeCharCode(code){
+  function writeCharCode(code) {
     const ch = state.decoder.decode(new Uint8Array([code]));
     curSpan.text += ch;
-    curCols += 1; // tiap byte → 1 kolom (monospace)
+    curCols += 1; // Tiap byte → 1 kolom (monospace)
   }
-  function spanTextLength(sp){ return sp.text.length }
-  function measureLineCols(ln){ return ln.spans.reduce((n,s)=>n+spanTextLength(s),0) }
+  function spanTextLength(sp) { return sp.text.length }
+  function measureLineCols(ln) { return ln.spans.reduce((n, s) => n + spanTextLength(s), 0) }
 
-  while (i < bytes.length){
+  // Logika khusus untuk menangani "TGL BAYAR" dan "DAYA" sejajar
+  let isTglBayarLine = false;
+  let tglBayarText = '';
+  let dayaText = '';
+
+  while (i < bytes.length) {
     b = bytes[i++];
 
-    if (b === 0x1B){ // ESC
-      const cmd = bytes[i++]; if (cmd==null) break;
-      switch(cmd){
+    if (b === 0x1B) { // ESC
+      const cmd = bytes[i++]; if (cmd == null) break;
+      switch (cmd) {
         case 0x40: /* @ */ // Initialize
-          state.align='left'; state.bold=false; state.ul=false; state.font=0;
+          state.align = 'left'; state.bold = false; state.ul = false; state.font = 0;
           curLine.align = state.align;
           curSpan = mkSpan(state);
+          isTglBayarLine = false;
           break;
         case 0x74: /* 't' */ // codepage
           state.codepage = bytes[i++] ?? state.codepage;
           state.decoder = newDecoder(state.codepage, opts.cpOverride);
           break;
-        case 0x4D: /* 'M' */ // font A/B (info saja)
+        case 0x4D: /* 'M' */ // font A/B
           state.font = bytes[i++] ?? state.font;
           break;
         case 0x32: /* '2' */ // default line spacing (1/6 inch)
@@ -201,8 +209,7 @@ function interpretEscPos(bytes, opts){
         case 0x61: /* 'a' */ // align
           {
             const n = bytes[i++] ?? 0;
-            state.align = (n===1||n===49) ? 'center' : (n===2||n===50) ? 'right' : 'left';
-            // align berlaku pada baris berjalan; tidak memaksa newline
+            state.align = (n === 1 || n === 49) ? 'center' : (n === 2 || n === 50) ? 'right' : 'left';
             curLine.align = state.align;
           }
           break;
@@ -210,66 +217,82 @@ function interpretEscPos(bytes, opts){
           {
             const n = bytes[i++] ?? 0;
             const nextBold = !!(n & 1);
-            if (nextBold !== state.bold){ flushSpan(); state.bold = nextBold; curSpan.bold = state.bold; }
+            if (nextBold !== state.bold) { flushSpan(); state.bold = nextBold; curSpan.bold = state.bold; }
           }
           break;
         case 0x2D: /* '-' */ // underline on/off
           {
             const n = bytes[i++] ?? 0;
             const nextUL = !!(n & 1);
-            if (nextUL !== state.ul){ flushSpan(); state.ul = nextUL; curSpan.ul = state.ul; }
+            if (nextUL !== state.ul) { flushSpan(); state.ul = nextUL; curSpan.ul = state.ul; }
           }
           break;
         case 0x64: /* 'd' */ // feed n lines
           {
             const n = bytes[i++] ?? 0;
             flushLine();
-            for (let k=0;k<n;k++) lines.push(mkLine(state.align));
+            for (let k = 0; k < n; k++) lines.push(mkLine(state.align));
           }
           break;
-        case 0x21: /* '!' */ // print mode (bitfield) – kita gunakan bit emphasized saja sebagai info
+        case 0x21: /* '!' */ // print mode
           {
             const n = bytes[i++] ?? 0;
             const nextBold = !!(n & 0x08);
-            if (nextBold !== state.bold){ flushSpan(); state.bold = nextBold; curSpan.bold = state.bold; }
-            // bit width/height diabaikan untuk akurasi grid monospace
+            if (nextBold !== state.bold) { flushSpan(); state.bold = nextBold; curSpan.bold = state.bold; }
           }
           break;
         default:
-          // perintah lain diabaikan aman (bitmap, cut, dsb.)
           break;
       }
       continue;
     }
 
-    if (b === 0x0C){ // FF → mulai slip baru (form feed)
+    if (b === 0x0C) { // FF
       flushLine();
-      lines.push({__PAGE_BREAK__:true});
+      lines.push({ __PAGE_BREAK__: true });
       continue;
     }
-    if (b === 0x0D){ // CR (abaikan; biasanya diikuti LF)
+    if (b === 0x0D) { // CR
       continue;
     }
-    if (b === 0x0A){ // LF
+    if (b === 0x0A) { // LF
+      if (isTglBayarLine) {
+        // Gabungkan "TGL BAYAR" dan "DAYA" dalam satu baris
+        flushSpan();
+        curLine.spans.push({ text: tglBayarText + ' ' + dayaText, bold: false, ul: false });
+        curLine.widthCols = tglBayarText.length + dayaText.length + 1; // +1 untuk spasi
+        isTglBayarLine = false;
+        tglBayarText = '';
+        dayaText = '';
+      }
       flushLine();
       continue;
     }
-    if (b === 0x09){ // HT (tab stop setiap 8 kolom)
+    if (b === 0x09) { // HT
       const spaces = 8 - (curCols % 8 || 8);
       curSpan.text += ' '.repeat(spaces);
       curCols += spaces;
       continue;
     }
 
-    // printable
-    if (b >= 0x20){
+    // Logika khusus untuk "TGL BAYAR" dan "DAYA"
+    if (b >= 0x20) {
       writeCharCode(b);
+      const currentText = curSpan.text.toUpperCase();
+      if (currentText.includes('TGL BAYAR')) {
+        isTglBayarLine = true;
+        tglBayarText = currentText.replace(/[^:]+:/, '').trim(); // Ambil teks setelah ":"
+        curSpan.text = ''; // Kosongkan span untuk penggabungan nanti
+      } else if (isTglBayarLine && currentText.includes('DAYA')) {
+        dayaText = currentText.replace(/[^:]+:/, '').trim(); // Ambil teks setelah ":"
+        curSpan.text = ''; // Kosongkan span untuk penggabungan nanti
+      }
     }
   }
   if (curSpan.text || curLine.spans.length) flushLine();
 
-  // ukur lebar kolom setiap baris
-  for (const ln of lines){
+  // Ukur lebar kolom setiap baris
+  for (const ln of lines) {
     if (!ln.__PAGE_BREAK__) ln.widthCols = measureLineCols(ln);
   }
 
@@ -277,50 +300,47 @@ function interpretEscPos(bytes, opts){
 }
 
 /* ====== Render ke halaman ====== */
-function renderToPage(model, opts){
+function renderToPage(model, opts) {
   const PAGE = document.getElementById('page');
-  PAGE.innerHTML = ''; // clear
+  PAGE.innerHTML = ''; // Clear
   PAGE.classList.toggle('with-grid', !!opts.grid);
 
-  const cols = clamp(Number(opts.columns)||64, 32, 96);
+  const cols = clamp(Number(opts.columns) || 64, 32, 96);
   document.documentElement.style.setProperty('--cols', cols);
   const lineMM = (model.lineSpacingDots || DEFAULT_LS_DOTS) / PRINTER_DPMM;
   document.documentElement.style.setProperty('--lineHeight', lineMM + 'mm');
 
   const preCommon = {
-    className:'receipt',
-    style:`font-size:${opts.fontSize||12}pt`
+    className: 'receipt',
+    style: `font-size:${opts.fontSize || 12}pt`
   };
 
-  // split menjadi beberapa slip pada FF jika ada
   let slipLines = [];
-  function flushSlip(){
+  function flushSlip() {
     const slip = document.createElement('div');
     slip.className = 'slip';
     const pre = document.createElement('pre');
     pre.className = preCommon.className;
     pre.style = preCommon.style;
 
-    // konversi line objects → HTML string dengan padding align
     const rows = [];
-    for (const ln of slipLines){
+    for (const ln of slipLines) {
       const width = cols;
       const textWidth = ln.widthCols;
       let pad = 0;
-      if (ln.align==='center') pad = Math.max(0, Math.floor((width - textWidth)/2));
-      else if (ln.align==='right') pad = Math.max(0, width - textWidth);
-      const htmlSpans = ln.spans.map(sp=>{
+      if (ln.align === 'center') pad = Math.max(0, Math.floor((width - textWidth) / 2));
+      else if (ln.align === 'right') pad = Math.max(0, width - textWidth);
+      const htmlSpans = ln.spans.map(sp => {
         const t = escHTML(sp.text);
-        const cls = (sp.bold?' bold':'') + (sp.ul?' ul':'');
+        const cls = (sp.bold ? ' bold' : '') + (sp.ul ? ' ul' : '');
         return cls.trim() ? `<span class="${cls.trim()}">${t}</span>` : t;
       }).join('');
       rows.push(' '.repeat(pad) + htmlSpans);
     }
 
-    // hitung target baris agar penuh tinggi halaman
     const targetLines = Math.max(1, Math.round(PAPER_HEIGHT_MM / lineMM));
     const deficit = Math.max(0, targetLines - rows.length);
-    for (let i=0;i<deficit;i++) rows.push('');
+    for (let i = 0; i < deficit; i++) rows.push('');
 
     pre.innerHTML = rows.join('\n');
     slip.appendChild(pre);
@@ -328,19 +348,19 @@ function renderToPage(model, opts){
     slipLines = [];
   }
 
-  for (const ln of model.lines){
-    if (ln.__PAGE_BREAK__){ flushSlip(); continue; }
+  for (const ln of model.lines) {
+    if (ln.__PAGE_BREAK__) { flushSlip(); continue; }
     slipLines.push(ln);
   }
-  flushSlip(); // sisakan terakhir
+  flushSlip();
 }
 
 /* ====== UI hooks ====== */
-const hexInput   = document.getElementById('hexInput');
-const renderBtn  = document.getElementById('renderBtn');
-const clearBtn   = document.getElementById('clearBtn');
-const colsInput  = document.getElementById('cols');
-const sizeInput  = document.getElementById('fsize');
+const hexInput = document.getElementById('hexInput');
+const renderBtn = document.getElementById('renderBtn');
+const clearBtn = document.getElementById('clearBtn');
+const colsInput = document.getElementById('cols');
+const sizeInput = document.getElementById('fsize');
 const gridToggle = document.getElementById('gridToggle');
 const cpOverride = document.getElementById('cpOverride');
 
@@ -356,9 +376,8 @@ renderBtn.onclick = () => {
 
 clearBtn.onclick = () => { document.getElementById('page').innerHTML = ''; };
 
-/* Optional: render otomatis saat user menekan Ctrl+Enter */
-hexInput.addEventListener('keydown', (e)=>{
-  if ((e.ctrlKey||e.metaKey) && e.key==='Enter') renderBtn.click();
+hexInput.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') renderBtn.click();
 });
 </script>
 </html>
