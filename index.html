@@ -1,0 +1,206 @@
+<!doctype html>
+<meta charset="windows-1252">
+<title>Receipt Dot Matrix – HTML Renderer</title>
+<style>
+  @page { size: 21.6cm 27.7cm; margin: 0; }
+  html, body { height: 100%; }
+  body { margin: 0; display: flex; justify-content: center; }
+  .page {
+    width: 21.6cm; height: 27.7cm; margin: 0;
+    display: flex; flex-direction: column;
+  }
+  .slip {
+    width: 100%;
+    display: flex; align-items: flex-start; justify-content: center;
+    break-inside: avoid; /* jangan pecah slip */
+  }
+  .receipt {
+    width: calc(var(--columns,64) * 1ch); /* 1ch ~ lebar '0' monospace */
+    font-family: "Courier New", Courier, monospace;
+    font-size: 12pt;
+    line-height: var(--lineHeight); /* diisi via JS dalam satuan mm */
+    white-space: pre;               /* pertahankan spasi & \n */
+    margin: 0;
+  }
+</style>
+
+<div class="page" id="page"></div>
+
+<script>
+/* --- Parameter fisik printer & kertas --- */
+const PAPER_HEIGHT_MM = 277;       // 27,7 cm
+const PAPER_WIDTH_MM  = 216;       // 21,6 cm (info saja)
+const PRINTER_DPMM    = 8;         // 8 dots per mm (≈203 dpi vertikal)
+const LINE_SPACING_DOTS = 26;      // ESC 3 n  -> n=26 (dari kode Anda)
+const FULL_COLUMNS = 64;           // lebar karakter monospace
+const CONTENT_COLUMNS = 56;        // area isi (agar nyaman saat center)
+
+/* Hitung line-height dalam mm mengikuti ESC 3 n */
+const LINE_HEIGHT_MM = LINE_SPACING_DOTS / PRINTER_DPMM; // mm per baris
+document.documentElement.style.setProperty('--lineHeight', LINE_HEIGHT_MM + 'mm');
+document.documentElement.style.setProperty('--columns', FULL_COLUMNS);
+
+/* Tinggi slip untuk 1/4, 1/3, 1/2 kuarto (berdasarkan 27,7 cm) */
+const SLIP_HEIGHT = {
+  quarter: PAPER_HEIGHT_MM / 4,
+  third:   PAPER_HEIGHT_MM / 3,
+  half:    PAPER_HEIGHT_MM / 2,
+};
+
+/* Utilitas teks monospace */
+const oneLine = s => String(s ?? '').replace(/\r?\n/g, ' ').replace(/\s+/g,' ').trim();
+const pad = (s, w) => s.length >= w ? s.slice(0, w) : s + ' '.repeat(w - s.length);
+const center = (s, w) => {
+  const t = String(s ?? '');
+  const ln = t.length > w ? t.slice(0, w) : t;
+  const left = Math.max(0, Math.floor((w - ln.length) / 2));
+  return ' '.repeat(left) + ln;
+};
+
+/* Mapping label: nilai ke segmen “LBL: value” lebar tetap */
+function kvToSegment({label, value}, colWidth) {
+  const lblMax = 13;
+  const lbl = String(label).slice(0, lblMax);
+  const left = `${lbl}${' '.repeat(Math.max(0, lblMax - lbl.length))}: `;
+  const room = Math.max(0, colWidth - left.length);
+  let val = oneLine(value);
+  if (val.length > room) val = val.slice(0, room);
+  return pad(left + val, colWidth);
+}
+
+/* Jika header >4 item → 2 kolom: 4 item awal di kiri, sisanya ditarik dari belakang ke kanan */
+function layoutHeaderLinesCompact(kvs, width) {
+  const lines = [];
+  if (kvs.length <= 4) { kvs.forEach(kv => lines.push(kvToSegment(kv, width))); return lines; }
+  const colW = Math.floor(width / 2) - 1;
+  for (let i = 0; i < 4; i++) {
+    const leftKV = kvs[i]; if (!leftKV) break;
+    const rightIdx = kvs.length - 1 - i;
+    const rightKV = rightIdx >= 4 ? kvs[rightIdx] : null;
+    const L = kvToSegment(leftKV, colW);
+    const R = rightKV ? kvToSegment(rightKV, colW) : ''.padEnd(colW, ' ');
+    lines.push(`${L} ${R}`);
+  }
+  return lines;
+}
+
+/* Konstruksi header/isi mengikuti aturan Anda */
+function buildHeaderKVs(bill) {
+  const payDateLabel = bill?.receipt_keys?.find(k => k.key === 'pay_date')?.label || 'TGL BAYAR';
+  const out = [];
+  out.push({label: payDateLabel, value: formatDateID(bill?.pay_date)});
+  out.push({label: 'ID PELANGGAN', value: String(bill?.customer_id ?? '-')});
+  if (bill?.name) out.push({label: 'NAMA', value: String(bill.name)});
+  if (bill?.tarif) out.push({label: 'TARIF', value: String(bill.tarif)});
+  if (bill?.daya)  out.push({label: 'DAYA',  value: String(bill.daya) });
+  return out;
+}
+
+function buildHeaderBody(bill, width) {
+  const kvs = buildHeaderKVs(bill);
+  return layoutHeaderLinesCompact(kvs, width);
+}
+
+function toIDR(n) {
+  const nn = Number(String(n ?? '0').replace(/[^\d.-]/g, '')) || 0;
+  return nn.toLocaleString('id-ID');
+}
+
+function formatDateID(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  const m = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'][d.getMonth()];
+  const dd = String(d.getDate()).padStart(2,'0');
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  return `${dd}-${m}-${d.getFullYear()} ${hh}:${mm}`;
+}
+
+/* Detail (1 atau banyak) */
+function buildDetailBody(bill, detail, width) {
+  const out = [];
+  out.push('-'.repeat(Math.min(width, 40)));
+  if (detail?.period) out.push(kvToSegment({label:'PERIODE', value:String(detail.period)}, width));
+
+  const billVal = (Number(detail?.bill||0) + Number(detail?.fine||0)) || 0;
+  if (billVal) { out.push(kvToSegment({label:'TAGIHAN', value:`Rp ${toIDR(billVal)}`}, width)); out.push(''); }
+
+  if (bill?.receipt_statement_text) out.push(center(oneLine(bill.receipt_statement_text), width));
+  if (detail?.admin) { out.push(''); out.push(kvToSegment({label:'ADMIN BANK', value:`Rp ${toIDR(detail.admin)}`}, width)); }
+  if (detail?.total) { out.push(kvToSegment({label:'TOTAL BAYAR', value:`Rp ${toIDR(detail.total)}`}, width)); out.push(''); }
+
+  if (bill?.receipt_info_text) out.push(center(oneLine(bill.receipt_info_text), width));
+  out.push(''); out.push('');
+  return out;
+}
+
+function buildSingleBodyNoDetails(bill, width) {
+  const out = [];
+  const billVal = (Number(bill?.bill||0) + Number(bill?.fine||0)) || 0;
+  if (billVal) { out.push(kvToSegment({label:'TAGIHAN', value:`Rp ${toIDR(billVal)}`}, width)); out.push(''); }
+  if (bill?.receipt_statement_text) out.push(center(oneLine(bill.receipt_statement_text), width));
+  if (bill?.admin) { out.push(''); out.push(kvToSegment({label:'ADMIN BANK', value:`Rp ${toIDR(bill.admin)}`}, width)); }
+  if (bill?.total) { out.push(kvToSegment({label:'TOTAL BAYAR', value:`Rp ${toIDR(bill.total)}`}, width)); out.push(''); }
+  if (bill?.receipt_info_text) out.push(center(oneLine(bill.receipt_info_text), width));
+  out.push(''); out.push('');
+  return out;
+}
+
+/* Render satu slip (¼/⅓/½) */
+function renderSlip(container, bill, paperPart = 'quarter', isFirstDetail = true) {
+  const slip = document.createElement('div');
+  slip.className = 'slip';
+  slip.style.height = SLIP_HEIGHT[paperPart] + 'mm';
+
+  const pre = document.createElement('pre');
+  pre.className = 'receipt';
+
+  const title = String(bill?.receipt_title_text || 'INFORMASI TAGIHAN LISTRIK');
+  const header = buildHeaderBody(bill, CONTENT_COLUMNS);
+  const details = Array.isArray(bill?.bill_details) ? bill.bill_details : [];
+
+  const lines = [];
+  lines.push(pad('AirPay', CONTENT_COLUMNS));              // brand kiri
+  lines.push(center(title, CONTENT_COLUMNS));              // judul di tengah
+  lines.push('');
+
+  if (!details.length) {
+    lines.push(...header, ...buildSingleBodyNoDetails(bill, CONTENT_COLUMNS));
+  } else {
+    // detail pertama tanpa jeda ekstra, selanjutnya beri top blank 3 baris (efek ESC d 3)
+    details.forEach((det, idx) => {
+      if (idx>0) { lines.push('', '', ''); }
+      lines.push(...header, ...buildDetailBody(bill, det, CONTENT_COLUMNS));
+    });
+  }
+
+  // Tambah padding baris agar tinggi konten ≈ tinggi slip (meniru padToFixedSlip)
+  const printedLines = lines.length + 3; // kira2 untuk header
+  const targetLines = Math.round(SLIP_HEIGHT[paperPart] / LINE_HEIGHT_MM);
+  const deficit = Math.max(0, targetLines - printedLines);
+  for (let i=0;i<deficit;i++) lines.push('');
+
+  pre.textContent = lines.join('\n');
+  slip.appendChild(pre);
+  container.appendChild(slip);
+}
+
+/* ======= DEMO ======= */
+const exampleBill = {
+  pay_date: new Date().toISOString(),
+  customer_id: '534316500004',
+  name: "N~!@\\#$^*}?'&+LBDR4BLN UAT",
+  tarif: 'R1',
+  daya: '900',
+  receipt_title_text: 'INFORMASI TAGIHAN LISTRIK',
+  receipt_statement_text: 'PLN Menyatakan Struk Ini Sebagai Bukti Pembayaran Yang Sah',
+  receipt_info_text: 'Informasi Hubungi Call Center 123 Atu Hub PLN Terdekat',
+  bill_details: [{
+    period: 'JUL15',
+    bill: 78730, fine: 0, admin: 3600, total: 82330
+  }]
+};
+
+// Ubah 'quarter' ke 'third' atau 'half' sesuai setelan kertas di app Anda
+const PAGE = document.getElementById('page');
+renderSlip(PAGE, exampleBill, 'quarter');
+</script>
