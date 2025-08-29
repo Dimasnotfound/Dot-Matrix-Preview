@@ -1,206 +1,345 @@
 <!doctype html>
 <meta charset="windows-1252">
-<title>Receipt Dot Matrix – HTML Renderer</title>
+<title>ESC/POS Hex → Dot-Matrix Preview</title>
 <style>
+  :root {
+    --columns: 64;          /* total kolom monospace */
+    --content-cols: 64;     /* kolom efektif untuk align */
+    --lineHeight: 3.25mm;   /* akan diupdate dari ESC 3 n */
+  }
   @page { size: 21.6cm 27.7cm; margin: 0; }
   html, body { height: 100%; }
-  body { margin: 0; display: flex; justify-content: center; }
-  .page {
-    width: 21.6cm; height: 27.7cm; margin: 0;
-    display: flex; flex-direction: column;
-  }
-  .slip {
-    width: 100%;
-    display: flex; align-items: flex-start; justify-content: center;
-    break-inside: avoid; /* jangan pecah slip */
-  }
-  .receipt {
-    width: calc(var(--columns,64) * 1ch); /* 1ch ~ lebar '0' monospace */
+  body { margin: 0; font-family: system-ui, Arial, sans-serif; background:#0b1220; color:#e9eef7; }
+  .app { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  .card { background:#111a2c; border:1px solid #1f2b44; border-radius:16px; padding:16px; box-shadow:0 6px 24px rgba(0,0,0,.25); }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; }
+  textarea, select, button, input { border-radius:10px; border:1px solid #223354; background:#0e1730; color:#e9eef7; }
+  textarea { width:100%; min-height:170px; padding:12px; font:12px/1.25 "Cascadia Mono","Courier New",monospace; }
+  .controls { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  .controls > * { padding:10px 12px; }
+  button { cursor:pointer; font-weight:600; }
+  .page { width: 21.6cm; height: 27.7cm; margin: 16px auto 0; display:flex; flex-direction:column; gap:0; background:#fff; color:#000; }
+  .slip { width:100%; display:flex; align-items:flex-start; justify-content:center; break-inside:avoid; }
+  pre.receipt {
+    width: calc(var(--content-cols) * 1ch);
     font-family: "Courier New", Courier, monospace;
     font-size: 12pt;
-    line-height: var(--lineHeight); /* diisi via JS dalam satuan mm */
-    white-space: pre;               /* pertahankan spasi & \n */
-    margin: 0;
+    line-height: var(--lineHeight);
+    white-space: pre; margin:0; padding:0;
   }
+  .bold { font-weight:700; }
+  .muted { opacity:.66 }
+  .tips { font-size:12px; opacity:.85; margin-top:8px }
 </style>
 
-<div class="page" id="page"></div>
+<div class="app">
+  <div class="card">
+    <div class="row">
+      <div style="flex:2 1 520px">
+        <div style="font-weight:700; margin-bottom:8px">Paste hexdump ESC/POS kamu di sini</div>
+        <textarea id="hexInput" spellcheck="false" placeholder="Contoh:
+00000000  1b 40 1b 74 10 1b 4d 00 1b 33 1a 1b 61 00 41 69  |.@.t..M..3..a.Ai|
+00000010  72 50 61 79 1b 61 01 1b 45 01 49 4e 46 4f 52 4d  |rPay.a..E.INFORM|
+..."></textarea>
+        <div class="tips">Format yang didukung: output <i>hexdump</i>/xxd (ada offset & kolom ASCII) maupun daftar byte hex biasa.</div>
+      </div>
+      <div style="flex:1 1 260px">
+        <div class="controls">
+          <label>Slip:
+            <select id="paperPart">
+              <option value="quarter">¼ kuarto (default)</option>
+              <option value="third">⅓ kuarto</option>
+              <option value="half">½ kuarto</option>
+            </select>
+          </label>
+          <label>Kolom:
+            <input id="cols" type="number" min="32" max="96" step="1" value="64" style="width:90px">
+          </label>
+          <label>Font size:
+            <input id="fsize" type="number" min="8" max="16" step="1" value="12" style="width:90px">pt
+          </label>
+          <button id="renderBtn">Render</button>
+          <button id="sampleBtn" title="Isi contoh hexdump">Load Sample</button>
+          <button id="clearBtn" title="Bersihkan hasil">Clear</button>
+        </div>
+        <div class="tips">Line-spacing mengikuti perintah <code>ESC 3 n</code> (n dalam <i>dots</i>, asumsi 8 dot/mm ≈ 203 dpi).</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="page card" id="page" style="background:#fff;"></div>
+
+  <div class="card" style="margin-top:12px">
+    <div style="font-weight:700;margin-bottom:6px">Perintah yang diparse</div>
+    <div class="tips">
+      <code>ESC @</code> init, <code>ESC t n</code> code page (16 ⇒ Windows-1252), <code>ESC M n</code> font (dipakai untuk info), <code>ESC 3 n</code> line spacing,
+      <code>ESC a n</code> align (0/1/2 = L/C/R), <code>ESC E n</code> bold on/off, <code>ESC d n</code> feed n baris, <code>CR/LF</code> newline. Lainnya diabaikan aman.
+    </div>
+  </div>
+</div>
 
 <script>
-/* --- Parameter fisik printer & kertas --- */
-const PAPER_HEIGHT_MM = 277;       // 27,7 cm
-const PAPER_WIDTH_MM  = 216;       // 21,6 cm (info saja)
-const PRINTER_DPMM    = 8;         // 8 dots per mm (≈203 dpi vertikal)
-const LINE_SPACING_DOTS = 26;      // ESC 3 n  -> n=26 (dari kode Anda)
-const FULL_COLUMNS = 64;           // lebar karakter monospace
-const CONTENT_COLUMNS = 56;        // area isi (agar nyaman saat center)
+/* ====== Parameter fisik kertas (kuarto) ====== */
+const PAPER_HEIGHT_MM = 277;   // 27,7 cm
+const PRINTER_DPMM = 8;        // ≈203 dpi vertikal
+const SLIP_HEIGHT = { quarter: PAPER_HEIGHT_MM/4, third: PAPER_HEIGHT_MM/3, half: PAPER_HEIGHT_MM/2 };
 
-/* Hitung line-height dalam mm mengikuti ESC 3 n */
-const LINE_HEIGHT_MM = LINE_SPACING_DOTS / PRINTER_DPMM; // mm per baris
-document.documentElement.style.setProperty('--lineHeight', LINE_HEIGHT_MM + 'mm');
-document.documentElement.style.setProperty('--columns', FULL_COLUMNS);
+/* ====== Util ====== */
+const escHTML = s => String(s).replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+const padLeft = (s, n) => ' '.repeat(Math.max(0, n)) + s;
+const measureCols = s => String(s).length;
 
-/* Tinggi slip untuk 1/4, 1/3, 1/2 kuarto (berdasarkan 27,7 cm) */
-const SLIP_HEIGHT = {
-  quarter: PAPER_HEIGHT_MM / 4,
-  third:   PAPER_HEIGHT_MM / 3,
-  half:    PAPER_HEIGHT_MM / 2,
-};
+/* Map code page ESC t n → TextDecoder label (minimal untuk kasus umum) */
+const CODEPAGE_MAP = new Map([
+  [16, 'windows-1252'],    // WPC1252
+  [0,  'cp437'],           // PC437 (tidak semua browser support)
+  [2,  'ibm850'],          // PC850
+  [17, 'ibm866'],          // PC866
+  [19, 'iso-8859-15']      // PC858 ≈ Latin-9 (fallback)
+]);
 
-/* Utilitas teks monospace */
-const oneLine = s => String(s ?? '').replace(/\r?\n/g, ' ').replace(/\s+/g,' ').trim();
-const pad = (s, w) => s.length >= w ? s.slice(0, w) : s + ' '.repeat(w - s.length);
-const center = (s, w) => {
-  const t = String(s ?? '');
-  const ln = t.length > w ? t.slice(0, w) : t;
-  const left = Math.max(0, Math.floor((w - ln.length) / 2));
-  return ' '.repeat(left) + ln;
-};
-
-/* Mapping label: nilai ke segmen “LBL: value” lebar tetap */
-function kvToSegment({label, value}, colWidth) {
-  const lblMax = 13;
-  const lbl = String(label).slice(0, lblMax);
-  const left = `${lbl}${' '.repeat(Math.max(0, lblMax - lbl.length))}: `;
-  const room = Math.max(0, colWidth - left.length);
-  let val = oneLine(value);
-  if (val.length > room) val = val.slice(0, room);
-  return pad(left + val, colWidth);
-}
-
-/* Jika header >4 item → 2 kolom: 4 item awal di kiri, sisanya ditarik dari belakang ke kanan */
-function layoutHeaderLinesCompact(kvs, width) {
-  const lines = [];
-  if (kvs.length <= 4) { kvs.forEach(kv => lines.push(kvToSegment(kv, width))); return lines; }
-  const colW = Math.floor(width / 2) - 1;
-  for (let i = 0; i < 4; i++) {
-    const leftKV = kvs[i]; if (!leftKV) break;
-    const rightIdx = kvs.length - 1 - i;
-    const rightKV = rightIdx >= 4 ? kvs[rightIdx] : null;
-    const L = kvToSegment(leftKV, colW);
-    const R = rightKV ? kvToSegment(rightKV, colW) : ''.padEnd(colW, ' ');
-    lines.push(`${L} ${R}`);
+/* ====== Hexdump parser → Uint8Array ====== */
+function parseHexDump(input) {
+  // buang kolom ASCII di kanan (setelah '|') dan offset di awal
+  const bytes = [];
+  input.split(/\r?\n/).forEach(line => {
+    const core = line.split('|')[0];                 // kiri sebelum ASCII
+    const noOffset = core.replace(/^\s*[\da-fA-F]{8,}\s+/,''); // drop "00000010  "
+    const matches = noOffset.match(/\b[0-9a-fA-F]{2}\b/g);
+    if (matches) matches.forEach(h => bytes.push(parseInt(h,16)));
+  });
+  // jika tidak ada match, coba treat sebagai daftar hex murni
+  if (bytes.length === 0) {
+    const matches = input.match(/\b[0-9a-fA-F]{2}\b/g) || [];
+    matches.forEach(h => bytes.push(parseInt(h,16)));
   }
-  return lines;
+  return new Uint8Array(bytes);
 }
 
-/* Konstruksi header/isi mengikuti aturan Anda */
-function buildHeaderKVs(bill) {
-  const payDateLabel = bill?.receipt_keys?.find(k => k.key === 'pay_date')?.label || 'TGL BAYAR';
-  const out = [];
-  out.push({label: payDateLabel, value: formatDateID(bill?.pay_date)});
-  out.push({label: 'ID PELANGGAN', value: String(bill?.customer_id ?? '-')});
-  if (bill?.name) out.push({label: 'NAMA', value: String(bill.name)});
-  if (bill?.tarif) out.push({label: 'TARIF', value: String(bill.tarif)});
-  if (bill?.daya)  out.push({label: 'DAYA',  value: String(bill.daya) });
-  return out;
+/* ====== ESC/POS interpreter → array of lines ======
+   Setiap line: { align:'left'|'center'|'right', spans:[{text, bold}] }
+==================================================== */
+function interpretEscPos(bytes) {
+  let i = 0;
+  let state = {
+    align: 'left',
+    bold: false,
+    codepage: 16,                 // default → WPC1252
+    decoder: new TextDecoder('windows-1252'),
+    lineSpacingDots: 26,          // default dari contoh
+    font: 0
+  };
+
+  const lines = [];
+  let curLine = { align: state.align, spans: [] };
+  let curSpan = { text: '', bold: state.bold };
+
+  function flushSpan() {
+    if (curSpan.text) { curLine.spans.push(curSpan); curSpan = { text:'', bold: state.bold }; }
+  }
+  function flushLine() {
+    flushSpan();
+    // normalisasi: tetap dorong line meskipun kosong (untuk feed)
+    lines.push(curLine);
+    curLine = { align: state.align, spans: [] };
+  }
+  function writeByte(b) {
+    // tulis byte printable (>= 0x20) via decoder sesuai codepage aktif
+    const decLabel = CODEPAGE_MAP.get(state.codepage) || 'windows-1252';
+    if (!state.decoder || state.decoder.encoding !== decLabel) {
+      try { state.decoder = new TextDecoder(decLabel); }
+      catch { state.decoder = new TextDecoder('windows-1252'); }
+    }
+    const ch = state.decoder.decode(new Uint8Array([b]));
+    curSpan.text += ch;
+  }
+
+  while (i < bytes.length) {
+    const b = bytes[i++];
+
+    if (b === 0x1B) { // ESC
+      const cmd = bytes[i++]; if (cmd == null) break;
+      switch (cmd) {
+        case 0x40: /* @ */ // Initialize
+          state = { ...state, align:'left', bold:false, font:0 };
+          curLine.align = state.align;
+          curSpan.bold = state.bold;
+          break;
+        case 0x74: /* 't' */ // Select character code table
+          state.codepage = bytes[i++] ?? state.codepage;
+          break;
+        case 0x4D: /* 'M' */ // Select character font
+          state.font = bytes[i++] ?? state.font; // 0=A, 1=B (informasi, tidak dipakai untuk layout di sini)
+          break;
+        case 0x33: /* '3' */ // Set line spacing
+          state.lineSpacingDots = bytes[i++] ?? state.lineSpacingDots;
+          break;
+        case 0x61: /* 'a' */ // Select justification
+          {
+            const n = bytes[i++] ?? 0;
+            state.align = (n===1||n===49) ? 'center' : (n===2||n===50) ? 'right' : 'left';
+            curLine.align = state.align;
+          }
+          break;
+        case 0x45: /* 'E' */ // Emphasized (bold) on/off
+          {
+            const n = bytes[i++] ?? 0;
+            const nextBold = !!(n & 1);
+            if (nextBold !== state.bold) { flushSpan(); state.bold = nextBold; curSpan.bold = state.bold; }
+          }
+          break;
+        case 0x64: /* 'd' */ // Print and feed n lines
+          {
+            const n = bytes[i++] ?? 0;
+            flushLine();
+            for (let k=0;k<n;k++) lines.push({ align: state.align, spans: [] });
+          }
+          break;
+        default:
+          // skip parameterized commands we belum dukung dengan aman (tidak merusak posisi)
+          // Catatan: banyak command lain mulai dengan ESC {cmd} {n...}
+          break;
+      }
+      continue;
+    }
+
+    if (b === 0x0D) { // CR -> abaikan (umumnya diikuti LF)
+      continue;
+    }
+    if (b === 0x0A) { // LF → baris baru
+      flushLine();
+      continue;
+    }
+
+    // printable/data
+    if (b >= 0x20 || b === 0x09) {
+      writeByte(b);
+    }
+  }
+  // flush akhir
+  if (curSpan.text || curLine.spans.length) flushLine();
+
+  return { lines, lastLineSpacingDots: state.lineSpacingDots };
 }
 
-function buildHeaderBody(bill, width) {
-  const kvs = buildHeaderKVs(bill);
-  return layoutHeaderLinesCompact(kvs, width);
-}
+/* ====== Render ke "slip" dengan align & bold ====== */
+function renderToPage(result, opts) {
+  const PAGE = document.getElementById('page');
+  PAGE.innerHTML = ''; // clear
 
-function toIDR(n) {
-  const nn = Number(String(n ?? '0').replace(/[^\d.-]/g, '')) || 0;
-  return nn.toLocaleString('id-ID');
-}
+  const contentCols = Number(opts.columns) || 64;
+  document.documentElement.style.setProperty('--content-cols', contentCols);
+  document.documentElement.style.setProperty('--columns', contentCols);
+  document.querySelector('pre.receipt')?.style?.setProperty('font-size', (opts.fontSize || 12)+'pt');
 
-function formatDateID(iso) {
-  const d = iso ? new Date(iso) : new Date();
-  const m = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'][d.getMonth()];
-  const dd = String(d.getDate()).padStart(2,'0');
-  const hh = String(d.getHours()).padStart(2,'0');
-  const mm = String(d.getMinutes()).padStart(2,'0');
-  return `${dd}-${m}-${d.getFullYear()} ${hh}:${mm}`;
-}
+  // hitung line-height mm dari ESC 3 n
+  const mmPerLine = (result.lastLineSpacingDots || 26) / PRINTER_DPMM;
+  document.documentElement.style.setProperty('--lineHeight', mmPerLine + 'mm');
 
-/* Detail (1 atau banyak) */
-function buildDetailBody(bill, detail, width) {
-  const out = [];
-  out.push('-'.repeat(Math.min(width, 40)));
-  if (detail?.period) out.push(kvToSegment({label:'PERIODE', value:String(detail.period)}, width));
-
-  const billVal = (Number(detail?.bill||0) + Number(detail?.fine||0)) || 0;
-  if (billVal) { out.push(kvToSegment({label:'TAGIHAN', value:`Rp ${toIDR(billVal)}`}, width)); out.push(''); }
-
-  if (bill?.receipt_statement_text) out.push(center(oneLine(bill.receipt_statement_text), width));
-  if (detail?.admin) { out.push(''); out.push(kvToSegment({label:'ADMIN BANK', value:`Rp ${toIDR(detail.admin)}`}, width)); }
-  if (detail?.total) { out.push(kvToSegment({label:'TOTAL BAYAR', value:`Rp ${toIDR(detail.total)}`}, width)); out.push(''); }
-
-  if (bill?.receipt_info_text) out.push(center(oneLine(bill.receipt_info_text), width));
-  out.push(''); out.push('');
-  return out;
-}
-
-function buildSingleBodyNoDetails(bill, width) {
-  const out = [];
-  const billVal = (Number(bill?.bill||0) + Number(bill?.fine||0)) || 0;
-  if (billVal) { out.push(kvToSegment({label:'TAGIHAN', value:`Rp ${toIDR(billVal)}`}, width)); out.push(''); }
-  if (bill?.receipt_statement_text) out.push(center(oneLine(bill.receipt_statement_text), width));
-  if (bill?.admin) { out.push(''); out.push(kvToSegment({label:'ADMIN BANK', value:`Rp ${toIDR(bill.admin)}`}, width)); }
-  if (bill?.total) { out.push(kvToSegment({label:'TOTAL BAYAR', value:`Rp ${toIDR(bill.total)}`}, width)); out.push(''); }
-  if (bill?.receipt_info_text) out.push(center(oneLine(bill.receipt_info_text), width));
-  out.push(''); out.push('');
-  return out;
-}
-
-/* Render satu slip (¼/⅓/½) */
-function renderSlip(container, bill, paperPart = 'quarter', isFirstDetail = true) {
   const slip = document.createElement('div');
   slip.className = 'slip';
-  slip.style.height = SLIP_HEIGHT[paperPart] + 'mm';
+  slip.style.height = SLIP_HEIGHT[opts.paperPart] + 'mm';
 
   const pre = document.createElement('pre');
   pre.className = 'receipt';
-
-  const title = String(bill?.receipt_title_text || 'INFORMASI TAGIHAN LISTRIK');
-  const header = buildHeaderBody(bill, CONTENT_COLUMNS);
-  const details = Array.isArray(bill?.bill_details) ? bill.bill_details : [];
+  pre.style.fontSize = (opts.fontSize || 12) + 'pt';
 
   const lines = [];
-  lines.push(pad('AirPay', CONTENT_COLUMNS));              // brand kiri
-  lines.push(center(title, CONTENT_COLUMNS));              // judul di tengah
-  lines.push('');
+  for (const ln of result.lines) {
+    // gabungkan spans → html dengan <span class="bold">
+    let plain = '';
+    let html = '';
+    for (const sp of ln.spans) {
+      const t = escHTML(sp.text);
+      plain += sp.text;
+      html += sp.bold ? `<span class="bold">${t}</span>` : t;
+    }
+    const width = contentCols;
+    const pad = ln.align === 'center'
+      ? Math.floor((width - measureCols(plain)) / 2)
+      : ln.align === 'right'
+        ? Math.max(0, width - measureCols(plain))
+        : 0;
 
-  if (!details.length) {
-    lines.push(...header, ...buildSingleBodyNoDetails(bill, CONTENT_COLUMNS));
-  } else {
-    // detail pertama tanpa jeda ekstra, selanjutnya beri top blank 3 baris (efek ESC d 3)
-    details.forEach((det, idx) => {
-      if (idx>0) { lines.push('', '', ''); }
-      lines.push(...header, ...buildDetailBody(bill, det, CONTENT_COLUMNS));
-    });
+    // spasi padding harus berupa teks (bukan CSS) agar pas di monospace
+    lines.push(padLeft(html, pad));
   }
 
-  // Tambah padding baris agar tinggi konten ≈ tinggi slip (meniru padToFixedSlip)
-  const printedLines = lines.length + 3; // kira2 untuk header
-  const targetLines = Math.round(SLIP_HEIGHT[paperPart] / LINE_HEIGHT_MM);
-  const deficit = Math.max(0, targetLines - printedLines);
-  for (let i=0;i<deficit;i++) lines.push('');
+  // pad baris agar pas tinggi slip
+  const targetLines = Math.max(1, Math.round(SLIP_HEIGHT[opts.paperPart] / mmPerLine));
+  const deficit = Math.max(0, targetLines - lines.length);
+  for (let i=0; i<deficit; i++) lines.push('');
 
-  pre.textContent = lines.join('\n');
+  pre.innerHTML = lines.join('\n');
   slip.appendChild(pre);
-  container.appendChild(slip);
+  PAGE.appendChild(slip);
 }
 
-/* ======= DEMO ======= */
-const exampleBill = {
-  pay_date: new Date().toISOString(),
-  customer_id: '534316500004',
-  name: "N~!@\\#$^*}?'&+LBDR4BLN UAT",
-  tarif: 'R1',
-  daya: '900',
-  receipt_title_text: 'INFORMASI TAGIHAN LISTRIK',
-  receipt_statement_text: 'PLN Menyatakan Struk Ini Sebagai Bukti Pembayaran Yang Sah',
-  receipt_info_text: 'Informasi Hubungi Call Center 123 Atu Hub PLN Terdekat',
-  bill_details: [{
-    period: 'JUL15',
-    bill: 78730, fine: 0, admin: 3600, total: 82330
-  }]
+/* ====== UI hooks ====== */
+const hexInput = document.getElementById('hexInput');
+const renderBtn = document.getElementById('renderBtn');
+const sampleBtn = document.getElementById('sampleBtn');
+const clearBtn = document.getElementById('clearBtn');
+
+renderBtn.onclick = () => {
+  const bytes = parseHexDump(hexInput.value);
+  const { lines, lastLineSpacingDots } = interpretEscPos(bytes);
+  const paperPart = document.getElementById('paperPart').value;
+  const cols = document.getElementById('cols').value;
+  const fsize = document.getElementById('fsize').value;
+  renderToPage({ lines, lastLineSpacingDots }, { paperPart, columns: cols, fontSize: fsize });
 };
 
-// Ubah 'quarter' ke 'third' atau 'half' sesuai setelan kertas di app Anda
-const PAGE = document.getElementById('page');
-renderSlip(PAGE, exampleBill, 'quarter');
+sampleBtn.onclick = () => {
+  hexInput.value = [
+"00000000  1b 40 1b 74 10 1b 4d 00 1b 33 1a 1b 61 00 41 69  |.@.t..M..3..a.Ai|",
+"00000010  72 50 61 79 1b 61 01 1b 45 01 49 4e 46 4f 52 4d  |rPay.a..E.INFORM|",
+"00000020  41 53 49 20 54 41 47 49 48 41 4e 20 4c 49 53 54  |ASI TAGIHAN LIST|",
+"00000030  52 49 4b 1b 45 00 1b 61 01 54 47 4c 20 42 41 59  |RIK.E..a.TGL BAY|",
+"00000040  41 52 20 20 20 20 3a 20 32 33 2d 41 67 75 2d 32  |AR    : 23-Agu-2|",
+"00000050  30 32 35 20 20 44 41 59 41 20 20 20 20 20 20 20  |025  DAYA       |",
+"00000060  20 20 3a 20 34 35 30 20 20 20 20 20 20 20 20 20  |  : 450         |",
+"00000070  0d 0a 49 44 20 50 45 4c 41 4e 47 47 41 4e 20 3a  |..ID PELANGGAN :|",
+"00000080  20 35 33 34 33 31 36 35 30 30 30 30 31 20 20 20  | 534316500001   |",
+"00000090  20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20  |                |",
+"000000a0  20 20 20 20 20 20 20 20 20 0d 0a 4e 41 4d 41 20  |         ..NAMA |",
+"000000b0  20 20 20 20 20 20 20 20 3a 20 4e 7e 21 40 5c 23  |        : N~!@\\#|",
+"000000c0  24 5e 2a 7d 3f 27 20 20 20 20 20 20 20 20 20 20  |$^*}?'          |",
+"000000d0  20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20  |                |",
+"000000e0  20 20 0d 0a 54 41 52 49 46 20 20 20 20 20 20 20  |  ..TARIF       |",
+"000000f0  20 3a 20 52 31 20 20 20 20 20 20 20 20 20 20 20  | : R1           |",
+"00000100  20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20  |                |",
+"00000110  20 20 20 20 20 20 20 20 20 20 20 0d 0a 2d 2d 2d  |           ..---|",
+"00000120  2d 2d 2d 2d 2d 2d 2d 2d 2d 2d 2d 2d 2d 2d 2d 2d  |----------------|",
+"00000130  2d 2d 2d 2d 2d 2d 2d 2d 2d 2d 2d 2d 2d 2d 2d 2d  |----------------|",
+"00000140  2d 2d 2d 2d 2d 0d 0a 50 45 52 49 4f 44 45 20 20  |-----..PERIODE  |",
+"00000150  20 20 20 20 3a 20 4a 41 4e 31 39 20 20 20 20 20  |    : JAN19     |",
+"00000160  20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20  |                |",
+"00000170  20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 0d  |               .|",
+"00000180  0a 54 41 47 49 48 41 4e 20 20 20 20 20 20 3a 20  |.TAGIHAN      : |",
+"00000190  52 70 20 34 34 2e 38 33 39 20 20 20 20 20 20 20  |Rp 44.839       |",
+"000001a0  20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20  |                |",
+"000001b0  20 20 20 20 20 20 20 20 20 0d 0a 0d 0a 50 4c 4e  |         ....PLN|",
+"000001c0  20 4d 65 6e 79 61 74 61 6b 61 6e 20 53 74 72 75  | Menyatakan Stru|",
+"000001d0  6b 20 49 6e 69 20 53 65 62 61 67 61 69 20 42 75  |k Ini Sebagai Bu|",
+"000001e0  6b 74 69 20 50 65 6d 62 61 79 61 72 61 6e 20 59  |kti Pembayaran Y|",
+"000001f0  61 6e 67 0d 0a 53 61 68 0d 0a 0d 0a 41 44 4d 49  |ang..Sah....ADMI|",
+"00000200  4e 20 42 41 4e 4b 20 20 20 3a 20 52 70 20 33 2e  |N BANK   : Rp 3.|",
+"00000210  36 30 30 20 20 20 20 20 20 20 20 20 20 20 20 20  |600             |",
+"00000220  20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20  |                |",
+"00000230  20 20 20 20 0d 0a 54 4f 54 41 4c 20 42 41 59 41  |    ..TOTAL BAYA|",
+"00000240  52 20 20 3a 20 52 70 20 34 38 2e 34 33 39 20 20  |R  : Rp 48.439  |",
+"00000250  20 20 20 20 20 20 20 20 20 20 20 20 20 20 20 20  |                |",
+"00000260  20 20 20 20 20 20 20 20 20 20 20 20 20 20 0d 0a  |              ..|",
+"00000270  0d 0a 49 6e 66 6f 72 6d 61 73 69 20 48 75 62 75  |..Informasi Hubu|",
+"00000280  6e 67 69 20 43 61 6c 6c 20 43 65 6e 74 65 72 20  |ngi Call Center |",
+"00000290  31 32 33 20 41 74 75 20 48 75 62 20 50 4c 4e 20  |123 Atu Hub PLN |",
+"000002a0  54 65 72 64 65 6b 61 74 0d 0a 0d 0a 1b 64 03 0d  |Terdekat.....d..|",
+"000002b0  0a 1b 64 15                                      |..d.|"
+  ].join('\n');
+};
+
+clearBtn.onclick = () => {
+  document.getElementById('page').innerHTML = '';
+};
 </script>
