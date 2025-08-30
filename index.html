@@ -4,7 +4,7 @@
 <title>ESC/P Hex → Dot-Matrix Preview (Adjusted for Epson LX-300)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  :root{--cols:80;--lineHeight:4.233mm} /* Default to 80 cols for 10 cpi on LX-300 */
+  :root{--cols:80;--lineHeight:4.233mm} /* default 80 kolom (10 cpi) */
   @page{size:21.6cm 27.7cm;margin:0}
   html,body{height:100%}
   body{margin:0;background:#0b1220;color:#e9eef7;font-family:ui-sans-serif,system-ui,Arial}
@@ -26,9 +26,12 @@
   .bold{font-weight:700}
   .ul{text-decoration:underline}
   .italic{font-style:italic}
-  .double-width{letter-spacing:0.5ch} /* Approximate double-width; not perfect for monospaced */
-  .double-strike{text-shadow:0.05em 0.05em} /* Simulate double-strike */
-  .with-grid pre.receipt{background:repeating-linear-gradient(to right,rgba(0,0,0,.06),rgba(0,0,0,.06) 1ch,transparent 1ch,transparent 2ch),linear-gradient(#0000,#0000)}
+  .double-width{letter-spacing:0.5ch} /* pendekatan double-width */
+  .double-strike{text-shadow:0.05em 0.05em}
+  .with-grid pre.receipt{
+    background:repeating-linear-gradient(to right,rgba(0,0,0,.06),rgba(0,0,0,.06) 1ch,transparent 1ch,transparent 2ch),
+               linear-gradient(#0000,#0000)
+  }
   .toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   .sep{width:1px;height:24px;background:#223354;opacity:.6}
 </style>
@@ -39,12 +42,12 @@
       <div style="flex:2 1 520px" class="stack">
         <strong>Paste hexdump ESC/P di sini (Disesuaikan untuk Epson LX-300)</strong>
         <textarea id="hexInput" spellcheck="false" placeholder="Dukung format hexdump/xxd atau byte hex murni."></textarea>
-        <div class="hint">Perintah didukung: ESC @, ESC t n, ESC M, ESC P, ESC 3 n, ESC 2, ESC a n, ESC E n, ESC - n, ESC d n, ESC ! n (extended), LF/CR, HT, FF. Codepage auto-detect ditingkatkan untuk PC437 pada ESC t 1.</div>
+        <div class="hint">Perintah didukung: ESC @, ESC t n, ESC M, ESC P, ESC 3 n, ESC 2, ESC a n, ESC E n, ESC - n, ESC d n, ESC ! n (extended), LF/CR, HT, FF. Codepage auto-detect mendukung PC437 saat ESC t 0/1.</div>
       </div>
       <div style="flex:1 1 300px" class="stack">
         <div class="toolbar">
           <label>Kolom:
-            <input id="cols" type="number" min="32" max="136" value="80" style="width:88px"> /* Max ditingkatkan untuk 12/15 cpi */
+            <input id="cols" type="number" min="32" max="136" value="80" style="width:88px">
           </label>
           <label>Font size:
             <input id="fsize" type="number" min="8" max="16" value="12" style="width:88px"> pt
@@ -77,130 +80,344 @@
 </div>
 
 <script>
-const PAPER_HEIGHT_MM=277;
-const PAPER_WIDTH_MM=216;
-const PRINTER_DPMM=180 / 25.4; // ~7.086 for 180 dpi vertical on dot matrix
-const DEFAULT_LS_DOTS=30; // Corrected to 30 for 1/6 inch standard in ESC/P
-const escHTML=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
-const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
-const CODEPAGE_MAP=new Map([[0,'ibm437'],[1,'ibm437'],[2,'ibm850'],[16,'windows-1252'],[17,'ibm866'],[19,'iso-8859-15']]); // Added 1 for PC437
-function parseHexDump(input){
-  const lines=input.split(/\r?\n/);
-  const bytes=[];
-  for(const line of lines){
-    if(!line.trim()) continue;
-    const left=line.split('|')[0];
-    const noOffset=left.replace(/^\s*[\da-fA-F]{4,}\s+/,'');
-    const matches=noOffset.match(/\b[0-9a-fA-F]{2}\b/g);
-    if(matches) matches.forEach(h=>bytes.push(parseInt(h,16)));
+/* =========================
+   Konstanta & Utilitas
+   ========================= */
+const PAPER_HEIGHT_MM = 277;
+const PAPER_WIDTH_MM  = 216;
+const PRINTER_DPMM    = 180 / 25.4; // ~7.086 dpm (vertical) untuk 180 dpi printer dot-matrix
+const DEFAULT_LS_DOTS = 30;         // ESC 2 (1/6 inch)
+
+const escHTML = s => String(s).replace(/[&<>]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+const clamp   = (v,min,max) => Math.max(min, Math.min(max, v));
+
+/* =========================
+   Peta ESC t n → label
+   ========================= */
+const CODEPAGE_MAP = new Map([
+  [0,  'ibm437'],
+  [1,  'ibm437'],       // banyak LX-300 pakai 0 atau 1 untuk PC437
+  [2,  'ibm850'],
+  [16, 'windows-1252'],
+  [17, 'ibm866'],
+  [19, 'iso-8859-15'],
+]);
+
+/* ===========================================================
+   Polyfill CP437 (ibm437 / cp437) → Unicode
+   =========================================================== */
+const CP437_TABLE = [
+  0x00C7,0x00FC,0x00E9,0x00E2,0x00E4,0x00E0,0x00E5,0x00E7,
+  0x00EA,0x00EB,0x00E8,0x00EF,0x00EE,0x00EC,0x00C4,0x00C5,
+  0x00C9,0x00E6,0x00C6,0x00F4,0x00F6,0x00F2,0x00FB,0x00F9,
+  0x00FF,0x00D6,0x00DC,0x00A2,0x00A3,0x00A5,0x20A7,0x0192,
+  0x00E1,0x00ED,0x00F3,0x00FA,0x00F1,0x00D1,0x00AA,0x00BA,
+  0x00BF,0x2310,0x00AC,0x00BD,0x00BC,0x00A1,0x00AB,0x00BB,
+  0x2591,0x2592,0x2593,0x2502,0x2524,0x2561,0x2562,0x2556,
+  0x2555,0x2563,0x2551,0x2557,0x255D,0x255C,0x255B,0x2510,
+  0x2514,0x2534,0x252C,0x251C,0x2500,0x253C,0x255E,0x255F,
+  0x255A,0x2554,0x2569,0x2566,0x2560,0x2550,0x256C,0x2567,
+  0x2568,0x2564,0x2565,0x2559,0x2558,0x2552,0x2553,0x256B,
+  0x256A,0x2518,0x250C,0x2588,0x2584,0x258C,0x2590,0x2580,
+  0x03B1,0x00DF,0x0393,0x03C0,0x03A3,0x03C3,0x00B5,0x03C4,
+  0x03A6,0x0398,0x03A9,0x03B4,0x221E,0x03C6,0x03B5,0x2229,
+  0x2261,0x00B1,0x2265,0x2264,0x2320,0x2321,0x00F7,0x2248,
+  0x00B0,0x2219,0x00B7,0x221A,0x207F,0x00B2,0x25A0,0x00A0
+];
+
+function decodeByTable(table, u8) {
+  let out = '';
+  for (let i = 0; i < u8.length; i++) {
+    const b = u8[i] & 0xFF;
+    if (b < 0x80) out += String.fromCharCode(b);
+    else out += String.fromCodePoint(table[b - 0x80]);
   }
-  if(bytes.length===0){(input.match(/\b[0-9a-fA-F]{2}\b/g)||[]).forEach(h=>bytes.push(parseInt(h,16)));}
+  return out;
+}
+
+/* ===========================================================
+   mkDecoder aman:
+   - pakai TextDecoder jika label didukung
+   - polyfill untuk ibm437/cp437
+   - fallback terakhir ke windows-1252 agar tidak crash
+   =========================================================== */
+const mkDecoder = (cpNum, override) => {
+  const label = (override && override !== 'auto')
+    ? override
+    : (CODEPAGE_MAP.get(cpNum) || 'windows-1252'); // default aman
+
+  try {
+    return new TextDecoder(label);
+  } catch {
+    if (label === 'ibm437' || label === 'cp437') {
+      return { decode: (u8) => decodeByTable(CP437_TABLE, u8) };
+    }
+    // Bila ingin dukung cp850, bisa tambahkan polyfill serupa di sini.
+    return new TextDecoder('windows-1252');
+  }
+};
+
+/* =========================
+   Parser hexdump → bytes
+   ========================= */
+function parseHexDump(input){
+  const lines = input.split(/\r?\n/);
+  const bytes = [];
+  for (const line of lines){
+    if(!line.trim()) continue;
+    const left = line.split('|')[0];
+    const noOffset = left.replace(/^\s*[\da-fA-F]{4,}\s+/, '');
+    const matches = noOffset.match(/\b[0-9a-fA-F]{2}\b/g);
+    if(matches) matches.forEach(h => bytes.push(parseInt(h,16)));
+  }
+  if(bytes.length === 0){
+    (input.match(/\b[0-9a-fA-F]{2}\b/g) || [])
+      .forEach(h => bytes.push(parseInt(h,16)));
+  }
   return new Uint8Array(bytes);
 }
-function interpretEscPos(bytes,opts){
-  let i=0,b=0,curCols=0;
-  const mkDecoder=(cpNum,override)=>{
-    const label=(override&&override!=='auto')?override:(CODEPAGE_MAP.get(cpNum)||'ibm437'); // Default to ibm437 for LX-300
-    try{return new TextDecoder(label)}catch{return new TextDecoder('ibm437')}
+
+/* =========================
+   Interpreter ESC/P sederhana
+   ========================= */
+function interpretEscPos(bytes, opts){
+  let i = 0, b = 0, curCols = 0;
+
+  let state = {
+    align:'left', bold:false, ul:false, italic:false,
+    doubleWidth:false, doubleStrike:false,
+    condensed:false, proportional:false,
+    cpi:10, codepage:0,
+    decoder: mkDecoder(0, opts.cpOverride),
+    lineSpacingDots: DEFAULT_LS_DOTS,
+    font:0
   };
-  let state={align:'left',bold:false,ul:false,italic:false,doubleWidth:false,doubleStrike:false,condensed:false,proportional:false,cpi:10,codepage:0,decoder:mkDecoder(0,opts.cpOverride),lineSpacingDots:DEFAULT_LS_DOTS,font:0};
-  const mkLine=(align)=>({align,spans:[],widthCols:0});
-  const mkSpan=()=>({text:'',bold:state.bold,ul:state.ul,italic:state.italic,doubleWidth:state.doubleWidth,doubleStrike:state.doubleStrike});
-  let lines=[],curLine=mkLine(state.align),curSpan=mkSpan();
-  const flushSpan=()=>{if(curSpan.text){curLine.spans.push(curSpan);curSpan=mkSpan()}};
-  const flushLine=()=>{flushSpan();lines.push(curLine);curLine=mkLine(state.align);curCols=0};
-  const writeChar=(code)=>{const ch=state.decoder.decode(new Uint8Array([code]));curSpan.text+=ch;curCols+=1};
-  const spanLen=(sp)=>sp.text.length * (state.doubleWidth ? 2 : 1); // Approximate double width in col count
-  const measureCols=(ln)=>ln.spans.reduce((n,s)=>n+spanLen(s),0);
-  while(i<bytes.length){
-    b=bytes[i++];
-    if(b===0x1B){
-      const cmd=bytes[i++]; if(cmd==null) break;
+
+  const mkLine = (align)=>({align,spans:[],widthCols:0});
+  const mkSpan = ()=>({text:'',bold:state.bold,ul:state.ul,italic:state.italic,doubleWidth:state.doubleWidth,doubleStrike:state.doubleStrike});
+
+  let lines = [], curLine = mkLine(state.align), curSpan = mkSpan();
+
+  const flushSpan = ()=>{
+    if(curSpan.text){
+      curLine.spans.push(curSpan);
+      curSpan = mkSpan();
+    }
+  };
+  const flushLine = ()=>{
+    flushSpan();
+    lines.push(curLine);
+    curLine = mkLine(state.align);
+    curCols = 0;
+  };
+  const writeChar = (code)=>{
+    const ch = state.decoder.decode(new Uint8Array([code]));
+    curSpan.text += ch;
+    curCols += 1;
+  };
+  const spanLen = (sp)=> sp.text.length * (sp.doubleWidth ? 2 : 1);
+  const measureCols = (ln)=> ln.spans.reduce((n,s)=> n + spanLen(s), 0);
+
+  while(i < bytes.length){
+    b = bytes[i++];
+
+    if (b === 0x1B){ // ESC
+      const cmd = bytes[i++]; if (cmd == null) break;
       switch(cmd){
-        case 0x40:{state={...state,align:'left',bold:false,ul:false,italic:false,doubleWidth:false,doubleStrike:false,condensed:false,proportional:false,font:0,cpi:10};curLine.align=state.align;curSpan=mkSpan();break}
-        case 0x74:{const n=bytes[i++]??state.codepage;state.codepage=n;state.decoder=mkDecoder(n,opts.cpOverride);break}
-        case 0x4D:{state.font=0; state.cpi=12; break} // ESC M: 12 cpi, no n param
-        case 0x50:{state.font=0; state.cpi=10; break} // Added: ESC P for 10 cpi
-        case 0x32:{state.lineSpacingDots=DEFAULT_LS_DOTS;break}
-        case 0x33:{state.lineSpacingDots=bytes[i++]??state.lineSpacingDots;break}
-        case 0x61:{const n=bytes[i++]??0;state.align=(n===1||n===49)?'center':(n===2||n===50)?'right':'left';curLine.align=state.align;break}
-        case 0x45:{const n=bytes[i++]??0;const nextBold=!!(n&1);if(nextBold!==state.bold){flushSpan();state.bold=nextBold;curSpan.bold=state.bold}break}
-        case 0x2D:{const n=bytes[i++]??0;const nextUL=!!(n&1);if(nextUL!==state.ul){flushSpan();state.ul=nextUL;curSpan.ul=state.ul}break}
-        case 0x64:{const n=bytes[i++]??0;flushLine();for(let k=0;k<n;k++) lines.push(mkLine(state.align));break}
-        case 0x21:{const n=bytes[i++]??0;
-          const nextBold=!!(n&8); const nextUL=!!(n&128); const nextItalic=!!(n&64); const nextDoubleWidth=!!(n&32);
-          const nextDoubleStrike=!!(n&16); const nextCondensed=!!(n&4); const nextProportional=!!(n&2); const nextFont=!!(n&1)?1:0;
-          if(nextBold!==state.bold || nextUL!==state.ul || nextItalic!==state.italic || nextDoubleWidth!==state.doubleWidth || nextDoubleStrike!==state.doubleStrike){
+        case 0x40: { // ESC @ init
+          state = {...state, align:'left', bold:false, ul:false, italic:false,
+                   doubleWidth:false, doubleStrike:false,
+                   condensed:false, proportional:false, font:0, cpi:10};
+          curLine.align = state.align;
+          curSpan = mkSpan();
+          break;
+        }
+        case 0x74: { // ESC t n (codepage)
+          const n = bytes[i++] ?? state.codepage;
+          state.codepage = n;
+          state.decoder  = mkDecoder(n, opts.cpOverride);
+          break;
+        }
+        case 0x4D: { // ESC M → 12 cpi
+          state.font = 0; state.cpi = 12; break;
+        }
+        case 0x50: { // ESC P → 10 cpi
+          state.font = 0; state.cpi = 10; break;
+        }
+        case 0x32: { // ESC 2 (1/6 inch)
+          state.lineSpacingDots = DEFAULT_LS_DOTS; break;
+        }
+        case 0x33: { // ESC 3 n
+          state.lineSpacingDots = bytes[i++] ?? state.lineSpacingDots; break;
+        }
+        case 0x61: { // ESC a n (align)
+          const n = bytes[i++] ?? 0;
+          state.align = (n===1||n===49) ? 'center' : (n===2||n===50) ? 'right' : 'left';
+          curLine.align = state.align;
+          break;
+        }
+        case 0x45: { // ESC E n (bold on/off)
+          const n = bytes[i++] ?? 0;
+          const nextBold = !!(n & 1);
+          if (nextBold !== state.bold){ flushSpan(); state.bold = nextBold; curSpan.bold = state.bold; }
+          break;
+        }
+        case 0x2D: { // ESC - n (underline)
+          const n = bytes[i++] ?? 0;
+          const nextUL = !!(n & 1);
+          if (nextUL !== state.ul){ flushSpan(); state.ul = nextUL; curSpan.ul = state.ul; }
+          break;
+        }
+        case 0x64: { // ESC d n (feed n lines)
+          const n = bytes[i++] ?? 0;
+          flushLine();
+          for(let k=0;k<n;k++) lines.push(mkLine(state.align));
+          break;
+        }
+        case 0x21: { // ESC ! n (master select/extended)
+          const n = bytes[i++] ?? 0;
+          const nextBold         = !!(n & 8);
+          const nextUL           = !!(n & 128);
+          const nextItalic       = !!(n & 64);
+          const nextDoubleWidth  = !!(n & 32);
+          const nextDoubleStrike = !!(n & 16);
+          const nextCondensed    = !!(n & 4);
+          const nextProportional = !!(n & 2);
+          const nextFont         = !!(n & 1) ? 1 : 0;
+
+          if (nextBold!==state.bold || nextUL!==state.ul || nextItalic!==state.italic ||
+              nextDoubleWidth!==state.doubleWidth || nextDoubleStrike!==state.doubleStrike){
             flushSpan();
           }
-          state.bold=nextBold; state.ul=nextUL; state.italic=nextItalic; state.doubleWidth=nextDoubleWidth;
-          state.doubleStrike=nextDoubleStrike; state.condensed=nextCondensed; state.proportional=nextProportional; state.font=nextFont;
-          state.cpi = nextFont ? 12 : 10; // Update cpi from bit 0
-          if(state.condensed) state.cpi = (state.cpi===10 ? 17 : 20); // Approximate condensed
-          curSpan = mkSpan(); break}
-        default:break
+
+          state.bold = nextBold; state.ul = nextUL; state.italic = nextItalic;
+          state.doubleWidth = nextDoubleWidth; state.doubleStrike = nextDoubleStrike;
+          state.condensed = nextCondensed; state.proportional = nextProportional; state.font = nextFont;
+
+          state.cpi = nextFont ? 12 : 10;
+          if (state.condensed) state.cpi = (state.cpi===10 ? 17 : 20); // pendekatan
+          curSpan = mkSpan();
+          break;
+        }
+        default:
+          break;
       }
       continue;
     }
-    if(b===0x0C){flushLine();lines.push({__PAGE_BREAK__:true});continue}
-    if(b===0x0D){continue}
-    if(b===0x0A){flushLine();continue}
-    if(b===0x09){const spaces=8-(curCols%8||8);curSpan.text+=' '.repeat(spaces);curCols+=spaces;continue}
-    if(b>=0x20){writeChar(b)}
-  }
-  if(curSpan.text||curLine.spans.length) flushLine();
-  for(const ln of lines){if(!ln.__PAGE_BREAK__) ln.widthCols=measureCols(ln)}
-  return {lines,lineSpacingDots:state.lineSpacingDots};
-}
-function renderToPage(model,opts){
-  const PAGE=document.getElementById('page');
-  PAGE.innerHTML='';
-  PAGE.classList.toggle('with-grid',!!opts.grid);
-  const cols=clamp(Number(opts.columns)||80,32,136); // Increased max for higher cpi
-  document.documentElement.style.setProperty('--cols',cols);
-  const lineMM=(model.lineSpacingDots||DEFAULT_LS_DOTS)/PRINTER_DPMM;
-  document.documentElement.style.setProperty('--lineHeight',lineMM+'mm');
-  const preCommon={className:'receipt',style:`font-size:${opts.fontSize||12}pt`};
-  let slipLines=[];
-  function flushSlip(){
-    const slip=document.createElement('div');
-    slip.className='slip';
-    const pre=document.createElement('pre');
-    pre.className=preCommon.className;
-    pre.style=preCommon.style;
-    const rows=[];
-    for(const ln of slipLines){
-      const width=cols;
-      const textWidth=ln.widthCols;
-      let pad=0;
-      if(ln.align==='center') pad=Math.max(0,Math.floor((width-textWidth)/2));
-      else if(ln.align==='right') pad=Math.max(0,width-textWidth);
-      const htmlSpans=ln.spans.map(sp=>{const t=escHTML(sp.text);let cls='';
-        if(sp.bold) cls+=' bold'; if(sp.ul) cls+=' ul'; if(sp.italic) cls+=' italic';
-        if(sp.doubleWidth) cls+=' double-width'; if(sp.doubleStrike) cls+=' double-strike';
-        return cls.trim()?`<span class="${cls.trim()}">${t}</span>`:t}).join('');
-      rows.push(' '.repeat(pad)+htmlSpans);
+
+    if (b === 0x0C){ // FF → page break
+      flushLine();
+      lines.push({__PAGE_BREAK__:true});
+      continue;
     }
-    const targetLines=Math.max(1,Math.round(PAPER_HEIGHT_MM/lineMM));
-    const deficit=Math.max(0,targetLines-rows.length);
-    for(let i=0;i<deficit;i++) rows.push('');
-    pre.innerHTML=rows.join('\n');
+    if (b === 0x0D){ // CR
+      continue;
+    }
+    if (b === 0x0A){ // LF
+      flushLine();
+      continue;
+    }
+    if (b === 0x09){ // TAB
+      const spaces = 8 - (curCols % 8 || 8);
+      curSpan.text += ' '.repeat(spaces);
+      curCols += spaces;
+      continue;
+    }
+    if (b >= 0x20){ // printable
+      writeChar(b);
+    }
+  }
+
+  if (curSpan.text || curLine.spans.length) flushLine();
+
+  for (const ln of lines){
+    if (!ln.__PAGE_BREAK__) ln.widthCols = measureCols(ln);
+  }
+  return { lines, lineSpacingDots: state.lineSpacingDots };
+}
+
+/* =========================
+   Renderer ke halaman
+   ========================= */
+function renderToPage(model, opts){
+  const PAGE = document.getElementById('page');
+  PAGE.innerHTML = '';
+  PAGE.classList.toggle('with-grid', !!opts.grid);
+
+  const cols = clamp(Number(opts.columns)||80, 32, 136);
+  document.documentElement.style.setProperty('--cols', cols);
+
+  const lineMM = (model.lineSpacingDots || DEFAULT_LS_DOTS) / PRINTER_DPMM;
+  document.documentElement.style.setProperty('--lineHeight', lineMM + 'mm');
+
+  const preCommon = { className: 'receipt', style: `font-size:${opts.fontSize||12}pt` };
+
+  let slipLines = [];
+  function flushSlip(){
+    const slip = document.createElement('div');
+    slip.className = 'slip';
+    const pre = document.createElement('pre');
+    pre.className = preCommon.className;
+    pre.style     = preCommon.style;
+
+    const rows = [];
+    for (const ln of slipLines){
+      const width = cols;
+      const textWidth = ln.widthCols;
+      let pad = 0;
+      if (ln.align === 'center') pad = Math.max(0, Math.floor((width - textWidth)/2));
+      else if (ln.align === 'right') pad = Math.max(0, width - textWidth);
+
+      const htmlSpans = ln.spans.map(sp=>{
+        const t = escHTML(sp.text);
+        let cls = '';
+        if (sp.bold) cls += ' bold';
+        if (sp.ul) cls += ' ul';
+        if (sp.italic) cls += ' italic';
+        if (sp.doubleWidth) cls += ' double-width';
+        if (sp.doubleStrike) cls += ' double-strike';
+        return cls.trim() ? `<span class="${cls.trim()}">${t}</span>` : t;
+      }).join('');
+
+      rows.push(' '.repeat(pad) + htmlSpans);
+    }
+
+    const targetLines = Math.max(1, Math.round(PAPER_HEIGHT_MM / lineMM));
+    const deficit = Math.max(0, targetLines - rows.length);
+    for (let i = 0; i < deficit; i++) rows.push('');
+
+    pre.innerHTML = rows.join('\n');
     slip.appendChild(pre);
     PAGE.appendChild(slip);
-    slipLines=[];
+    slipLines = [];
   }
-  for(const ln of model.lines){if(ln.__PAGE_BREAK__){flushSlip();continue}slipLines.push(ln)}
+
+  for (const ln of model.lines){
+    if (ln.__PAGE_BREAK__){ flushSlip(); continue; }
+    slipLines.push(ln);
+  }
   flushSlip();
 }
-const hexInput=document.getElementById('hexInput');
-const renderBtn=document.getElementById('renderBtn');
-const clearBtn=document.getElementById('clearBtn');
-const colsInput=document.getElementById('cols');
-const sizeInput=document.getElementById('fsize');
-const gridToggle=document.getElementById('gridToggle');
-const cpOverride=document.getElementById('cpOverride');
-renderBtn.onclick=()=>{const bytes=parseHexDump(hexInput.value);const interp=interpretEscPos(bytes,{cpOverride:cpOverride.value});renderToPage(interp,{columns:colsInput.value,fontSize:sizeInput.value,grid:gridToggle.checked})};
-clearBtn.onclick=()=>{document.getElementById('page').innerHTML=''};
-hexInput.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter') renderBtn.click()});
+
+/* =========================
+   Hook UI
+   ========================= */
+const hexInput   = document.getElementById('hexInput');
+const renderBtn  = document.getElementById('renderBtn');
+const clearBtn   = document.getElementById('clearBtn');
+const colsInput  = document.getElementById('cols');
+const sizeInput  = document.getElementById('fsize');
+const gridToggle = document.getElementById('gridToggle');
+const cpOverride = document.getElementById('cpOverride');
+
+renderBtn.onclick = () => {
+  const bytes  = parseHexDump(hexInput.value);
+  const interp = interpretEscPos(bytes, { cpOverride: cpOverride.value });
+  renderToPage(interp, { columns: colsInput.value, fontSize: sizeInput.value, grid: gridToggle.checked });
+};
+clearBtn.onclick = () => { document.getElementById('page').innerHTML = ''; };
+hexInput.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') renderBtn.click();
+});
 </script>
 </html>
