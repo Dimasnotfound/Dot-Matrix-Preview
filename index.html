@@ -21,8 +21,28 @@
   .hint{font-size:12px;opacity:.8}
   .page-wrap{margin-top:16px}
   .page{width:21.6cm;height:27.7cm;margin:0 auto;background:#fff;color:#000;display:flex;flex-direction:column;overflow:auto;border-radius:8px}
-  .slip{flex:1;display:block;padding:0 0;break-inside:avoid}
-  pre.receipt{margin:0;padding:0 6mm;white-space:pre;font-family:"Courier New",Courier,monospace;font-size:12pt;line-height:var(--lineHeight);width:calc(var(--cols)*1ch)}
+  /* == Slip sekarang punya gutter nomor baris di kiri == */
+  .slip{flex:1;display:flex;align-items:flex-start;break-inside:avoid}
+  pre.gutter{
+    margin:0;
+    padding:0 2mm 0 6mm;             /* sejajarkan dengan padding kiri receipt */
+    white-space:pre;
+    font-family:"Courier New",Courier,monospace;
+    font-size:12pt;
+    line-height:var(--lineHeight);
+    user-select:none;                 /* supaya tidak ikut tercopy */
+    color:#94a3b8;                    /* abu-abu agar tidak dominan */
+    border-right:1px dashed #e5e7eb;  /* pemisah visual */
+  }
+  pre.receipt{
+    margin:0;
+    padding:0 6mm;                    /* kanan 6mm, kiri 0 (gutter sudah ambil kiri) */
+    white-space:pre;
+    font-family:"Courier New",Courier,monospace;
+    font-size:12pt;
+    line-height:var(--lineHeight);
+    width:calc(var(--cols)*1ch);
+  }
   .bold{font-weight:700}
   .ul{text-decoration:underline}
   .italic{font-style:italic}
@@ -136,10 +156,7 @@ function decodeByTable(table, u8) {
 }
 
 /* ===========================================================
-   mkDecoder aman:
-   - pakai TextDecoder jika label didukung
-   - polyfill untuk ibm437/cp437
-   - fallback terakhir ke windows-1252 agar tidak crash
+   mkDecoder aman
    =========================================================== */
 const mkDecoder = (cpNum, override) => {
   const label = (override && override !== 'auto')
@@ -152,7 +169,6 @@ const mkDecoder = (cpNum, override) => {
     if (label === 'ibm437' || label === 'cp437') {
       return { decode: (u8) => decodeByTable(CP437_TABLE, u8) };
     }
-    // Bila ingin dukung cp850, bisa tambahkan polyfill serupa di sini.
     return new TextDecoder('windows-1252');
   }
 };
@@ -337,7 +353,7 @@ function interpretEscPos(bytes, opts){
 }
 
 /* =========================
-   Renderer ke halaman
+   Renderer ke halaman + nomor baris
    ========================= */
 function renderToPage(model, opts){
   const PAGE = document.getElementById('page');
@@ -356,6 +372,13 @@ function renderToPage(model, opts){
   function flushSlip(){
     const slip = document.createElement('div');
     slip.className = 'slip';
+
+    // ===== Gutter nomor baris =====
+    const preGutter = document.createElement('pre');
+    preGutter.className = 'gutter';
+    preGutter.style.fontSize = `${opts.fontSize||12}pt`;
+
+    // ===== Konten receipt =====
     const pre = document.createElement('pre');
     pre.className = preCommon.className;
     pre.style     = preCommon.style;
@@ -382,11 +405,24 @@ function renderToPage(model, opts){
       rows.push(' '.repeat(pad) + htmlSpans);
     }
 
+    // Isi sampai tinggi halaman agar nomor baris sinkron
     const targetLines = Math.max(1, Math.round(PAPER_HEIGHT_MM / lineMM));
     const deficit = Math.max(0, targetLines - rows.length);
     for (let i = 0; i < deficit; i++) rows.push('');
 
-    pre.innerHTML = rows.join('\n');
+    // Buat nomor baris dengan lebar dinamis (padStart)
+    const total = rows.length;
+    const digits = String(total).length;
+    const gutterLines = [];
+    for (let i = 0; i < total; i++){
+      const n = String(i+1).padStart(digits, '0');
+      gutterLines.push(n + ' ');
+    }
+
+    preGutter.textContent = gutterLines.join('\n'); // plain text
+    pre.innerHTML = rows.join('\n');                // styled spans
+
+    slip.appendChild(preGutter);
     slip.appendChild(pre);
     PAGE.appendChild(slip);
     slipLines = [];
