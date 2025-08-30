@@ -1,11 +1,10 @@
-<!-- preview.html -->
 <!doctype html>
 <html lang="id">
 <meta charset="windows-1252">
-<title>ESC/POS Hex → Dot-Matrix Preview</title>
+<title>ESC/P Hex → Dot-Matrix Preview (Adjusted for Epson LX-300)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  :root{--cols:64;--lineHeight:4.233mm}
+  :root{--cols:80;--lineHeight:4.233mm} /* Default to 80 cols for 10 cpi on LX-300 */
   @page{size:21.6cm 27.7cm;margin:0}
   html,body{height:100%}
   body{margin:0;background:#0b1220;color:#e9eef7;font-family:ui-sans-serif,system-ui,Arial}
@@ -26,6 +25,9 @@
   pre.receipt{margin:0;padding:0 6mm;white-space:pre;font-family:"Courier New",Courier,monospace;font-size:12pt;line-height:var(--lineHeight);width:calc(var(--cols)*1ch)}
   .bold{font-weight:700}
   .ul{text-decoration:underline}
+  .italic{font-style:italic}
+  .double-width{letter-spacing:0.5ch} /* Approximate double-width; not perfect for monospaced */
+  .double-strike{text-shadow:0.05em 0.05em} /* Simulate double-strike */
   .with-grid pre.receipt{background:repeating-linear-gradient(to right,rgba(0,0,0,.06),rgba(0,0,0,.06) 1ch,transparent 1ch,transparent 2ch),linear-gradient(#0000,#0000)}
   .toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   .sep{width:1px;height:24px;background:#223354;opacity:.6}
@@ -35,14 +37,14 @@
   <div class="card">
     <div class="row">
       <div style="flex:2 1 520px" class="stack">
-        <strong>Paste hexdump ESC/POS di sini</strong>
+        <strong>Paste hexdump ESC/P di sini (Disesuaikan untuk Epson LX-300)</strong>
         <textarea id="hexInput" spellcheck="false" placeholder="Dukung format hexdump/xxd atau byte hex murni."></textarea>
-        <div class="hint">Perintah didukung: ESC @, ESC t n, ESC M n, ESC 3 n, ESC 2, ESC a n, ESC E n, ESC - n, ESC d n, LF/CR, HT, FF.</div>
+        <div class="hint">Perintah didukung: ESC @, ESC t n, ESC M, ESC P, ESC 3 n, ESC 2, ESC a n, ESC E n, ESC - n, ESC d n, ESC ! n (extended), LF/CR, HT, FF. Codepage auto-detect ditingkatkan untuk PC437 pada ESC t 1.</div>
       </div>
       <div style="flex:1 1 300px" class="stack">
         <div class="toolbar">
           <label>Kolom:
-            <input id="cols" type="number" min="32" max="96" value="64" style="width:88px">
+            <input id="cols" type="number" min="32" max="136" value="80" style="width:88px"> /* Max ditingkatkan untuk 12/15 cpi */
           </label>
           <label>Font size:
             <input id="fsize" type="number" min="8" max="16" value="12" style="width:88px"> pt
@@ -51,8 +53,8 @@
           <label>Codepage:
             <select id="cpOverride" title="Override codepage">
               <option value="auto">Auto (ESC t n)</option>
-              <option value="windows-1252" selected>windows-1252</option>
-              <option value="ibm437">ibm437</option>
+              <option value="ibm437" selected>ibm437 (PC437)</option>
+              <option value="windows-1252">windows-1252</option>
               <option value="ibm850">ibm850</option>
               <option value="ibm866">ibm866</option>
               <option value="iso-8859-15">iso-8859-15</option>
@@ -65,7 +67,7 @@
           <button id="renderBtn">Render</button>
           <button id="clearBtn">Clear</button>
         </div>
-        <div class="hint">Tinggi halaman mengikuti line-spacing terakhir.</div>
+        <div class="hint">Tinggi halaman mengikuti line-spacing terakhir. Untuk LX-300, set kolom ke 80 (10 cpi) atau 96 (12 cpi).</div>
       </div>
     </div>
   </div>
@@ -77,11 +79,11 @@
 <script>
 const PAPER_HEIGHT_MM=277;
 const PAPER_WIDTH_MM=216;
-const PRINTER_DPMM=8;
-const DEFAULT_LS_DOTS=34;
+const PRINTER_DPMM=180 / 25.4; // ~7.086 for 180 dpi vertical on dot matrix
+const DEFAULT_LS_DOTS=30; // Corrected to 30 for 1/6 inch standard in ESC/P
 const escHTML=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
 const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
-const CODEPAGE_MAP=new Map([[16,'windows-1252'],[0,'ibm437'],[2,'ibm850'],[17,'ibm866'],[19,'iso-8859-15']]);
+const CODEPAGE_MAP=new Map([[0,'ibm437'],[1,'ibm437'],[2,'ibm850'],[16,'windows-1252'],[17,'ibm866'],[19,'iso-8859-15']]); // Added 1 for PC437
 function parseHexDump(input){
   const lines=input.split(/\r?\n/);
   const bytes=[];
@@ -98,33 +100,44 @@ function parseHexDump(input){
 function interpretEscPos(bytes,opts){
   let i=0,b=0,curCols=0;
   const mkDecoder=(cpNum,override)=>{
-    const label=(override&&override!=='auto')?override:(CODEPAGE_MAP.get(cpNum)||'windows-1252');
-    try{return new TextDecoder(label)}catch{return new TextDecoder('windows-1252')}
+    const label=(override&&override!=='auto')?override:(CODEPAGE_MAP.get(cpNum)||'ibm437'); // Default to ibm437 for LX-300
+    try{return new TextDecoder(label)}catch{return new TextDecoder('ibm437')}
   };
-  let state={align:'left',bold:false,ul:false,codepage:16,decoder:mkDecoder(16,opts.cpOverride),lineSpacingDots:DEFAULT_LS_DOTS,font:0};
+  let state={align:'left',bold:false,ul:false,italic:false,doubleWidth:false,doubleStrike:false,condensed:false,proportional:false,cpi:10,codepage:0,decoder:mkDecoder(0,opts.cpOverride),lineSpacingDots:DEFAULT_LS_DOTS,font:0};
   const mkLine=(align)=>({align,spans:[],widthCols:0});
-  const mkSpan=()=>({text:'',bold:state.bold,ul:state.ul});
+  const mkSpan=()=>({text:'',bold:state.bold,ul:state.ul,italic:state.italic,doubleWidth:state.doubleWidth,doubleStrike:state.doubleStrike});
   let lines=[],curLine=mkLine(state.align),curSpan=mkSpan();
   const flushSpan=()=>{if(curSpan.text){curLine.spans.push(curSpan);curSpan=mkSpan()}};
   const flushLine=()=>{flushSpan();lines.push(curLine);curLine=mkLine(state.align);curCols=0};
   const writeChar=(code)=>{const ch=state.decoder.decode(new Uint8Array([code]));curSpan.text+=ch;curCols+=1};
-  const spanLen=(sp)=>sp.text.length;
+  const spanLen=(sp)=>sp.text.length * (state.doubleWidth ? 2 : 1); // Approximate double width in col count
   const measureCols=(ln)=>ln.spans.reduce((n,s)=>n+spanLen(s),0);
   while(i<bytes.length){
     b=bytes[i++];
     if(b===0x1B){
       const cmd=bytes[i++]; if(cmd==null) break;
       switch(cmd){
-        case 0x40:{state={...state,align:'left',bold:false,ul:false,font:0};curLine.align=state.align;curSpan=mkSpan();break}
+        case 0x40:{state={...state,align:'left',bold:false,ul:false,italic:false,doubleWidth:false,doubleStrike:false,condensed:false,proportional:false,font:0,cpi:10};curLine.align=state.align;curSpan=mkSpan();break}
         case 0x74:{const n=bytes[i++]??state.codepage;state.codepage=n;state.decoder=mkDecoder(n,opts.cpOverride);break}
-        case 0x4D:{state.font=bytes[i++]??state.font;break}
+        case 0x4D:{state.font=0; state.cpi=12; break} // ESC M: 12 cpi, no n param
+        case 0x50:{state.font=0; state.cpi=10; break} // Added: ESC P for 10 cpi
         case 0x32:{state.lineSpacingDots=DEFAULT_LS_DOTS;break}
         case 0x33:{state.lineSpacingDots=bytes[i++]??state.lineSpacingDots;break}
         case 0x61:{const n=bytes[i++]??0;state.align=(n===1||n===49)?'center':(n===2||n===50)?'right':'left';curLine.align=state.align;break}
         case 0x45:{const n=bytes[i++]??0;const nextBold=!!(n&1);if(nextBold!==state.bold){flushSpan();state.bold=nextBold;curSpan.bold=state.bold}break}
         case 0x2D:{const n=bytes[i++]??0;const nextUL=!!(n&1);if(nextUL!==state.ul){flushSpan();state.ul=nextUL;curSpan.ul=state.ul}break}
         case 0x64:{const n=bytes[i++]??0;flushLine();for(let k=0;k<n;k++) lines.push(mkLine(state.align));break}
-        case 0x21:{const n=bytes[i++]??0;const nextBold=!!(n&0x08);if(nextBold!==state.bold){flushSpan();state.bold=nextBold;curSpan.bold=state.bold}break}
+        case 0x21:{const n=bytes[i++]??0;
+          const nextBold=!!(n&8); const nextUL=!!(n&128); const nextItalic=!!(n&64); const nextDoubleWidth=!!(n&32);
+          const nextDoubleStrike=!!(n&16); const nextCondensed=!!(n&4); const nextProportional=!!(n&2); const nextFont=!!(n&1)?1:0;
+          if(nextBold!==state.bold || nextUL!==state.ul || nextItalic!==state.italic || nextDoubleWidth!==state.doubleWidth || nextDoubleStrike!==state.doubleStrike){
+            flushSpan();
+          }
+          state.bold=nextBold; state.ul=nextUL; state.italic=nextItalic; state.doubleWidth=nextDoubleWidth;
+          state.doubleStrike=nextDoubleStrike; state.condensed=nextCondensed; state.proportional=nextProportional; state.font=nextFont;
+          state.cpi = nextFont ? 12 : 10; // Update cpi from bit 0
+          if(state.condensed) state.cpi = (state.cpi===10 ? 17 : 20); // Approximate condensed
+          curSpan = mkSpan(); break}
         default:break
       }
       continue;
@@ -143,7 +156,7 @@ function renderToPage(model,opts){
   const PAGE=document.getElementById('page');
   PAGE.innerHTML='';
   PAGE.classList.toggle('with-grid',!!opts.grid);
-  const cols=clamp(Number(opts.columns)||64,32,96);
+  const cols=clamp(Number(opts.columns)||80,32,136); // Increased max for higher cpi
   document.documentElement.style.setProperty('--cols',cols);
   const lineMM=(model.lineSpacingDots||DEFAULT_LS_DOTS)/PRINTER_DPMM;
   document.documentElement.style.setProperty('--lineHeight',lineMM+'mm');
@@ -162,7 +175,10 @@ function renderToPage(model,opts){
       let pad=0;
       if(ln.align==='center') pad=Math.max(0,Math.floor((width-textWidth)/2));
       else if(ln.align==='right') pad=Math.max(0,width-textWidth);
-      const htmlSpans=ln.spans.map(sp=>{const t=escHTML(sp.text);const cls=(sp.bold?' bold':'')+(sp.ul?' ul':'');return cls.trim()?`<span class="${cls.trim()}">${t}</span>`:t}).join('');
+      const htmlSpans=ln.spans.map(sp=>{const t=escHTML(sp.text);let cls='';
+        if(sp.bold) cls+=' bold'; if(sp.ul) cls+=' ul'; if(sp.italic) cls+=' italic';
+        if(sp.doubleWidth) cls+=' double-width'; if(sp.doubleStrike) cls+=' double-strike';
+        return cls.trim()?`<span class="${cls.trim()}">${t}</span>`:t}).join('');
       rows.push(' '.repeat(pad)+htmlSpans);
     }
     const targetLines=Math.max(1,Math.round(PAPER_HEIGHT_MM/lineMM));
